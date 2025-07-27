@@ -62,10 +62,10 @@ class DoclingWorker:
         try:
             print(f"🎛️  Configuring DocumentConverter with options: {list(docling_options.keys())}")
             
-            # Check if we have simple JSON VLM options (sent over NATS)
-            if self._is_simple_vlm_options(docling_options):
-                print("🔄 Converting simple VLM options to Docling objects...")
-                docling_config = self._convert_simple_vlm_options(docling_options)
+            # Check if we have simple JSON options (sent over NATS)
+            if self._is_simple_options(docling_options):
+                print("🔄 Converting simple options to Docling objects...")
+                docling_config = self._convert_simple_options(docling_options)
             else:
                 print("📋 Using provided Docling configuration objects...")
                 docling_config = docling_options
@@ -81,13 +81,43 @@ class DoclingWorker:
             print("🔄 Falling back to standard converter")
             return DocumentConverter()
     
-    def _is_simple_vlm_options(self, options):
-        """Check if options are simple JSON VLM options (vs complex Docling objects)"""
+    def _is_simple_options(self, options):
+        """Check if options are simple JSON options (vs complex Docling objects)"""
         if not isinstance(options, dict):
             return False
         
-        # Simple VLM options have keys like: vlm_model, do_picture_description, etc.
-        simple_keys = {'vlm_model', 'do_picture_description', 'images_scale', 'custom_prompt'}
+        # Simple options cover ONLY REAL Docling pipeline settings (verified against API)
+        simple_keys = {
+            # === VLM OPTIONS (REAL) ===
+            'vlm_model', 'do_picture_description', 'images_scale', 'custom_prompt', 'vlm_prompt',
+            'vlm_batch_size', 'vlm_picture_area_threshold', 'vlm_generation_config',
+            
+            # === ENRICHMENT OPTIONS (REAL) ===  
+            'do_picture_classification', 'do_code_enrichment', 'do_formula_enrichment',
+            'do_table_structure', 'do_ocr',
+            
+            # === OCR OPTIONS (REAL) ===
+            'ocr_languages', 'force_full_page_ocr', 'ocr_bitmap_area_threshold', 
+            'ocr_use_gpu', 'ocr_confidence_threshold', 'ocr_model_storage_directory',
+            'ocr_recog_network', 'ocr_download_enabled',
+            
+            # === TABLE STRUCTURE OPTIONS (REAL) ===
+            'table_do_cell_matching', 'table_mode',
+            
+            # === IMAGE & PAGE OPTIONS (REAL) ===
+            'generate_picture_images', 'generate_page_images', 'generate_table_images',
+            
+            # === CORE PIPELINE OPTIONS (REAL) ===
+            'create_legacy_output', 'document_timeout', 'enable_remote_services',
+            'allow_external_plugins', 'artifacts_path', 'force_backend_text',
+            'generate_parsed_pages',
+            
+            # === PERFORMANCE OPTIONS (REAL) ===
+            'accelerator_device', 'num_threads', 'cuda_use_flash_attention2',
+            
+            # === INPUT FORMAT SUPPORT ===
+            'input_formats'
+        }
         complex_keys = {'format_options', 'accelerator_options'}
         
         has_simple = any(key in options for key in simple_keys)
@@ -95,12 +125,15 @@ class DoclingWorker:
         
         return has_simple and not has_complex
     
-    def _convert_simple_vlm_options(self, simple_options):
-        """Convert simple JSON VLM options to proper Docling objects"""
+    def _convert_simple_options(self, simple_options):
+        """Convert simple JSON options to proper Docling objects"""
         from docling.document_converter import PdfFormatOption
         from docling.datamodel.base_models import InputFormat
         from docling.datamodel.pipeline_options import (
             PdfPipelineOptions, 
+            AcceleratorOptions,
+            AcceleratorDevice,
+            OcrEngine,
             granite_picture_description, 
             smolvlm_picture_description
         )
@@ -108,38 +141,362 @@ class DoclingWorker:
         # Start with basic pipeline options
         pipeline_options = PdfPipelineOptions()
         
-        # Configure VLM if requested
+        # ======================
+        # CORE PIPELINE OPTIONS (REAL Docling fields)
+        # ======================
+        if 'create_legacy_output' in simple_options:
+            pipeline_options.create_legacy_output = bool(simple_options['create_legacy_output'])
+            print(f"📜 Create legacy output: {pipeline_options.create_legacy_output}")
+        
+        if 'document_timeout' in simple_options:
+            pipeline_options.document_timeout = float(simple_options['document_timeout']) if simple_options['document_timeout'] else None
+            print(f"⏱️  Document timeout: {pipeline_options.document_timeout}")
+        
+        if 'enable_remote_services' in simple_options:
+            pipeline_options.enable_remote_services = bool(simple_options['enable_remote_services'])
+            print(f"🌐 Remote services: {pipeline_options.enable_remote_services}")
+        
+        if 'allow_external_plugins' in simple_options:
+            pipeline_options.allow_external_plugins = bool(simple_options['allow_external_plugins'])
+            print(f"🔌 External plugins: {pipeline_options.allow_external_plugins}")
+        
+        if 'force_backend_text' in simple_options:
+            pipeline_options.force_backend_text = bool(simple_options['force_backend_text'])
+            print(f"📝 Force backend text: {pipeline_options.force_backend_text}")
+        
+        if 'generate_parsed_pages' in simple_options:
+            pipeline_options.generate_parsed_pages = bool(simple_options['generate_parsed_pages'])
+            print(f"📄 Generate parsed pages: {pipeline_options.generate_parsed_pages}")
+        
+        if 'artifacts_path' in simple_options:
+            pipeline_options.artifacts_path = simple_options['artifacts_path']
+            print(f"📁 Artifacts path: {pipeline_options.artifacts_path}")
+            
+        # ======================
+        # IMAGE & PAGE OPTIONS (REAL Docling fields)
+        # ======================
+        if 'generate_page_images' in simple_options:
+            pipeline_options.generate_page_images = bool(simple_options['generate_page_images'])
+            print(f"🖼️  Generate page images: {pipeline_options.generate_page_images}")
+        
+        if 'generate_table_images' in simple_options:
+            pipeline_options.generate_table_images = bool(simple_options['generate_table_images'])
+            print(f"📊 Generate table images: {pipeline_options.generate_table_images}")
+        
+        # ======================
+        # VLM PICTURE DESCRIPTION
+        # ======================
         if simple_options.get('do_picture_description', False):
             pipeline_options.do_picture_description = True
-            pipeline_options.generate_picture_images = True
             
             # Set image scale
             pipeline_options.images_scale = simple_options.get('images_scale', 2.0)
             
-            # Choose VLM model
-            vlm_model = simple_options.get('vlm_model', 'granite').lower()
-            if vlm_model == 'granite':
-                pipeline_options.picture_description_options = granite_picture_description
-                print("🤖 Using Granite Vision model for VLM")
-            elif vlm_model == 'smoldocling' or vlm_model == 'smolvlm':
-                pipeline_options.picture_description_options = smolvlm_picture_description
-                print("🤖 Using SmolVLM model for VLM")
-            else:
-                print(f"⚠️  Unknown VLM model '{vlm_model}', defaulting to Granite")
-                pipeline_options.picture_description_options = granite_picture_description
+            # Check if custom prompt is provided
+            custom_prompt = simple_options.get('custom_prompt') or simple_options.get('vlm_prompt')
             
-            # Custom prompt if provided
-            custom_prompt = simple_options.get('custom_prompt')
-            if custom_prompt and hasattr(pipeline_options.picture_description_options, 'prompt'):
-                pipeline_options.picture_description_options.prompt = custom_prompt
-                print(f"📝 Using custom VLM prompt: {custom_prompt[:50]}...")
+            if custom_prompt:
+                # Use PictureDescriptionVlmOptions for custom prompts
+                from docling.datamodel.pipeline_options import PictureDescriptionVlmOptions
+                
+                vlm_model = simple_options.get('vlm_model', 'granite').lower()
+                if vlm_model == 'granite':
+                    repo_id = "ibm-granite/granite-vision-3.1-2b-preview"
+                elif vlm_model == 'smoldocling' or vlm_model == 'smolvlm':
+                    repo_id = "HuggingFaceTB/SmolVLM-256M-Instruct"
+                else:
+                    repo_id = "ibm-granite/granite-vision-3.1-2b-preview"
+                
+                vlm_options = PictureDescriptionVlmOptions(
+                    repo_id=repo_id,
+                    prompt=custom_prompt
+                )
+                
+                # Set additional VLM options if provided
+                if 'vlm_batch_size' in simple_options:
+                    vlm_options.batch_size = int(simple_options['vlm_batch_size'])
+                    print(f"📦 VLM batch size: {vlm_options.batch_size}")
+                
+                if 'vlm_picture_area_threshold' in simple_options:
+                    vlm_options.picture_area_threshold = float(simple_options['vlm_picture_area_threshold'])
+                    print(f"📏 VLM area threshold: {vlm_options.picture_area_threshold}")
+                
+                if 'vlm_generation_config' in simple_options:
+                    vlm_options.generation_config = simple_options['vlm_generation_config']
+                    print(f"⚙️  VLM generation config: {vlm_options.generation_config}")
+                
+                pipeline_options.picture_description_options = vlm_options
+                print(f"🤖 Using {vlm_model} with custom prompt: {custom_prompt[:50]}...")
+                
+            else:
+                # Use pre-configured models without custom prompts
+                vlm_model = simple_options.get('vlm_model', 'granite').lower()
+                if vlm_model == 'granite':
+                    pipeline_options.picture_description_options = granite_picture_description
+                    print("🤖 Using Granite Vision model for VLM")
+                elif vlm_model == 'smoldocling' or vlm_model == 'smolvlm':
+                    pipeline_options.picture_description_options = smolvlm_picture_description
+                    print("🤖 Using SmolVLM model for VLM")
+                else:
+                    print(f"⚠️  Unknown VLM model '{vlm_model}', defaulting to Granite")
+                    pipeline_options.picture_description_options = granite_picture_description
         
-        # Create format options
+        # ======================
+        # PICTURE CLASSIFICATION
+        # ======================
+        if simple_options.get('do_picture_classification', False):
+            pipeline_options.do_picture_classification = True
+            print("📊 Enabling picture classification")
+        
+        # ======================
+        # CODE ENRICHMENT
+        # ======================
+        if simple_options.get('do_code_enrichment', False):
+            pipeline_options.do_code_enrichment = True
+            print("💻 Enabling code enrichment")
+        
+        # ======================
+        # FORMULA ENRICHMENT
+        # ======================
+        if simple_options.get('do_formula_enrichment', False):
+            pipeline_options.do_formula_enrichment = True
+            print("🧮 Enabling formula enrichment")
+        
+        # ======================
+        # OCR OPTIONS (ALL REAL Docling OCR fields)
+        # ======================
+        if 'do_ocr' in simple_options:
+            pipeline_options.do_ocr = bool(simple_options['do_ocr'])
+            print(f"🔍 OCR: {pipeline_options.do_ocr}")
+        
+        # Advanced OCR Options - customize ocr_options if any OCR settings are provided
+        if any(key.startswith('ocr_') for key in simple_options.keys()) or 'force_full_page_ocr' in simple_options:
+            # Start with existing OCR options (which have defaults) and modify them
+            ocr_options = pipeline_options.ocr_options
+            
+            if 'ocr_languages' in simple_options:
+                langs = simple_options['ocr_languages']
+                if isinstance(langs, str):
+                    langs = [langs]
+                ocr_options.lang = langs
+                print(f"🌍 OCR languages: {langs}")
+            
+            if 'force_full_page_ocr' in simple_options:
+                ocr_options.force_full_page_ocr = bool(simple_options['force_full_page_ocr'])
+                print(f"🔍 Force full page OCR: {ocr_options.force_full_page_ocr}")
+            
+            if 'ocr_bitmap_area_threshold' in simple_options:
+                ocr_options.bitmap_area_threshold = float(simple_options['ocr_bitmap_area_threshold'])
+                print(f"📏 OCR bitmap threshold: {ocr_options.bitmap_area_threshold}")
+            
+            if 'ocr_use_gpu' in simple_options:
+                ocr_options.use_gpu = bool(simple_options['ocr_use_gpu']) if simple_options['ocr_use_gpu'] is not None else None
+                print(f"🚀 OCR use GPU: {ocr_options.use_gpu}")
+            
+            if 'ocr_confidence_threshold' in simple_options:
+                ocr_options.confidence_threshold = float(simple_options['ocr_confidence_threshold'])
+                print(f"🎯 OCR confidence: {ocr_options.confidence_threshold}")
+            
+            if 'ocr_model_storage_directory' in simple_options:
+                ocr_options.model_storage_directory = simple_options['ocr_model_storage_directory']
+                print(f"📁 OCR model dir: {ocr_options.model_storage_directory}")
+            
+            if 'ocr_recog_network' in simple_options:
+                ocr_options.recog_network = simple_options['ocr_recog_network']
+                print(f"🧠 OCR network: {ocr_options.recog_network}")
+            
+            if 'ocr_download_enabled' in simple_options:
+                ocr_options.download_enabled = bool(simple_options['ocr_download_enabled'])
+                print(f"📥 OCR download: {ocr_options.download_enabled}")
+            
+            pipeline_options.ocr_options = ocr_options
+        
+        # ======================
+        # TABLE STRUCTURE (ALL REAL Docling table options)
+        # ======================
+        if 'do_table_structure' in simple_options:
+            pipeline_options.do_table_structure = bool(simple_options['do_table_structure'])
+            print(f"📋 Table structure: {pipeline_options.do_table_structure}")
+        
+        # Advanced Table Structure Options
+        if 'table_do_cell_matching' in simple_options or 'table_mode' in simple_options:
+            from docling.datamodel.pipeline_options import TableStructureOptions
+            table_options = TableStructureOptions()
+            
+            if 'table_do_cell_matching' in simple_options:
+                table_options.do_cell_matching = bool(simple_options['table_do_cell_matching'])
+                print(f"🔗 Table cell matching: {table_options.do_cell_matching}")
+            
+            if 'table_mode' in simple_options:
+                # Handle table mode (need to import TableFormerMode if available)
+                try:
+                    from docling.datamodel.pipeline_options import TableFormerMode
+                    mode_name = simple_options['table_mode'].upper()
+                    if hasattr(TableFormerMode, mode_name):
+                        table_options.mode = getattr(TableFormerMode, mode_name)
+                        print(f"📊 Table mode: {mode_name}")
+                    else:
+                        print(f"⚠️  Unknown table mode: {mode_name}")
+                except ImportError:
+                    print("⚠️  TableFormerMode not available")
+            
+            pipeline_options.table_structure_options = table_options
+        
+        # ======================
+        # IMAGE GENERATION
+        # ======================
+        if simple_options.get('generate_picture_images', True):  # Default enabled
+            pipeline_options.generate_picture_images = True
+        
+        # ======================
+        # ADDITIONAL PIPELINE OPTIONS
+        # ======================
+        # Note: Some advanced options like chunking may not be available in all Docling versions
+        
+
+        
+        # ======================
+        # ASR (AUDIO) OPTIONS
+        # ======================
+        if simple_options.get('do_asr', False):
+            from docling.datamodel.pipeline_options import AudioPipelineOptions
+            
+            # Create audio pipeline options
+            audio_pipeline_options = AudioPipelineOptions()
+            
+            # ASR model selection
+            asr_model = simple_options.get('asr_model', 'whisper_tiny').lower()
+            # Map common names to actual model names
+            asr_model_map = {
+                'whisper': 'whisper_tiny',
+                'whisper_tiny': 'whisper_tiny',
+                'whisper_small': 'whisper_small',
+                'whisper_base': 'whisper_base',
+                'whisper_large': 'whisper_large'
+            }
+            audio_pipeline_options.asr_model = asr_model_map.get(asr_model, 'whisper_tiny')
+            
+            # Language setting
+            asr_language = simple_options.get('asr_language', 'auto')
+            if asr_language != 'auto':
+                audio_pipeline_options.language = asr_language
+            
+            print(f"🎙️  Enabling ASR with model: {audio_pipeline_options.asr_model}")
+            if asr_language != 'auto':
+                print(f"   Language: {asr_language}")
+
+        # ======================
+        # FORMAT OPTIONS
+        # ======================
+        # Start with PDF as default
         format_options = {
             InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
         }
         
-        return {"format_options": format_options}
+        # Add additional input formats if specified
+        input_formats = simple_options.get('input_formats', ['pdf'])
+        if not isinstance(input_formats, list):
+            input_formats = [input_formats]
+        
+        for fmt in input_formats:
+            fmt_lower = fmt.lower()
+            if fmt_lower in ['docx', 'doc']:
+                from docling.document_converter import WordFormatOption
+                format_options[InputFormat.DOCX] = WordFormatOption()
+                print(f"📄 Added support for: {fmt_lower.upper()}")
+            elif fmt_lower in ['image', 'png', 'jpg', 'jpeg']:
+                from docling.document_converter import ImageFormatOption
+                format_options[InputFormat.IMAGE] = ImageFormatOption()
+                print(f"🖼️  Added support for: {fmt_lower.upper()}")
+            elif fmt_lower in ['html', 'htm']:
+                from docling.document_converter import HTMLFormatOption
+                format_options[InputFormat.HTML] = HTMLFormatOption()
+                print(f"🌐 Added support for: {fmt_lower.upper()}")
+            elif fmt_lower in ['pptx', 'ppt']:
+                from docling.document_converter import PowerpointFormatOption
+                format_options[InputFormat.PPTX] = PowerpointFormatOption()
+                print(f"📊 Added support for: {fmt_lower.upper()}")
+        
+        # Add audio formats if ASR is enabled
+        if simple_options.get('do_asr', False):
+            from docling.document_converter import AudioFormatOption
+            format_options[InputFormat.AUDIO] = AudioFormatOption(
+                pipeline_options=audio_pipeline_options
+            )
+            print("🎙️  Added support for: AUDIO")
+        
+        # ======================
+        # ACCELERATOR OPTIONS
+        # ======================
+        converter_options = {"format_options": format_options}
+        
+        # Add accelerator options if specified
+        accelerator_device = simple_options.get('accelerator_device')
+        num_threads = simple_options.get('num_threads')
+        
+        if accelerator_device or num_threads or simple_options.get('cuda_use_flash_attention2') is not None:
+            device = AcceleratorDevice.AUTO  # Default
+            if accelerator_device:
+                device_map = {
+                    'cpu': AcceleratorDevice.CPU,
+                    'gpu': AcceleratorDevice.CUDA,
+                    'cuda': AcceleratorDevice.CUDA,
+                    'mps': AcceleratorDevice.MPS,
+                    'auto': AcceleratorDevice.AUTO
+                }
+                device = device_map.get(accelerator_device.lower(), AcceleratorDevice.AUTO)
+                print(f"🚀 Using accelerator: {accelerator_device}")
+            
+            # Build accelerator options
+            accel_kwargs = {
+                'num_threads': num_threads or 4,
+                'device': device
+            }
+            
+            # Add CUDA flash attention if specified
+            if 'cuda_use_flash_attention2' in simple_options:
+                accel_kwargs['cuda_use_flash_attention2'] = bool(simple_options['cuda_use_flash_attention2'])
+                print(f"⚡ CUDA Flash Attention 2: {accel_kwargs['cuda_use_flash_attention2']}")
+            
+            accelerator_options = AcceleratorOptions(**accel_kwargs)
+            
+            # Set accelerator options on the pipeline (this is the correct way)
+            pipeline_options.accelerator_options = accelerator_options
+            print(f"⚡ Accelerator configured: {device}, threads: {num_threads or 4}")
+        
+        # Note: artifacts_path is already handled in CORE PIPELINE OPTIONS section above
+        
+        # ======================
+        # CORE DOCUMENTCONVERTER OPTIONS
+        # ======================
+        # Timeout settings
+        timeout = simple_options.get('timeout')
+        if timeout:
+            converter_options["timeout"] = float(timeout)
+            print(f"⏱️  Setting timeout: {timeout}s")
+        
+        # Error handling
+        raises_on_error = simple_options.get('raises_on_error')
+        if raises_on_error is not None:
+            converter_options["raises_on_error"] = bool(raises_on_error)
+            print(f"🛡️  Raises on error: {raises_on_error}")
+        
+        # Debug mode
+        debug_mode = simple_options.get('debug_mode', False)
+        if debug_mode:
+            converter_options["debug_mode"] = True
+            print("🐛 Debug mode enabled")
+        
+        # File size limits
+        max_file_size = simple_options.get('max_file_size')
+        if max_file_size:
+            converter_options["max_file_size"] = int(max_file_size)
+            print(f"📏 Max file size: {max_file_size} bytes")
+        
+        # Note: Output/export options may not be DocumentConverter parameters
+        # These would typically be handled at the document export level
+        
+        return converter_options
 
     async def process_document_request(self, message):
         """Process a document processing request from NATS"""
