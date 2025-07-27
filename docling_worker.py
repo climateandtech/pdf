@@ -45,13 +45,12 @@ class DoclingWorker:
         print(f"✅ Docling Worker connected to S3: {self.s3_config.bucket_name}")
         
     def _create_document_converter(self, docling_options=None):
-        """Create a DocumentConverter with any Docling configuration options
+        """Create a DocumentConverter with configuration options
         
         Args:
-            docling_options (dict): Complete Docling configuration including:
-                - format_options: Per-format configuration (PDF, DOCX, etc.)
-                - accelerator_options: Hardware acceleration settings
-                - Any other DocumentConverter parameters
+            docling_options (dict): Can be either:
+                - Simple JSON VLM options: {"vlm_model": "granite", "do_picture_description": true}
+                - Complete Docling objects: {"format_options": {...}}
                 
         Returns:
             DocumentConverter: Configured converter instance
@@ -63,9 +62,16 @@ class DoclingWorker:
         try:
             print(f"🎛️  Configuring DocumentConverter with options: {list(docling_options.keys())}")
             
-            # Create DocumentConverter with any provided options
-            # This passes through all configuration directly to Docling
-            converter = DocumentConverter(**docling_options)
+            # Check if we have simple JSON VLM options (sent over NATS)
+            if self._is_simple_vlm_options(docling_options):
+                print("🔄 Converting simple VLM options to Docling objects...")
+                docling_config = self._convert_simple_vlm_options(docling_options)
+            else:
+                print("📋 Using provided Docling configuration objects...")
+                docling_config = docling_options
+            
+            # Create DocumentConverter with converted options
+            converter = DocumentConverter(**docling_config)
             
             print("✅ DocumentConverter configured successfully")
             return converter
@@ -74,6 +80,66 @@ class DoclingWorker:
             print(f"⚠️  DocumentConverter configuration failed: {e}")
             print("🔄 Falling back to standard converter")
             return DocumentConverter()
+    
+    def _is_simple_vlm_options(self, options):
+        """Check if options are simple JSON VLM options (vs complex Docling objects)"""
+        if not isinstance(options, dict):
+            return False
+        
+        # Simple VLM options have keys like: vlm_model, do_picture_description, etc.
+        simple_keys = {'vlm_model', 'do_picture_description', 'images_scale', 'custom_prompt'}
+        complex_keys = {'format_options', 'accelerator_options'}
+        
+        has_simple = any(key in options for key in simple_keys)
+        has_complex = any(key in options for key in complex_keys)
+        
+        return has_simple and not has_complex
+    
+    def _convert_simple_vlm_options(self, simple_options):
+        """Convert simple JSON VLM options to proper Docling objects"""
+        from docling.document_converter import PdfFormatOption
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import (
+            PdfPipelineOptions, 
+            granite_picture_description, 
+            smolvlm_picture_description
+        )
+        
+        # Start with basic pipeline options
+        pipeline_options = PdfPipelineOptions()
+        
+        # Configure VLM if requested
+        if simple_options.get('do_picture_description', False):
+            pipeline_options.do_picture_description = True
+            pipeline_options.generate_picture_images = True
+            
+            # Set image scale
+            pipeline_options.images_scale = simple_options.get('images_scale', 2.0)
+            
+            # Choose VLM model
+            vlm_model = simple_options.get('vlm_model', 'granite').lower()
+            if vlm_model == 'granite':
+                pipeline_options.picture_description_options = granite_picture_description
+                print("🤖 Using Granite Vision model for VLM")
+            elif vlm_model == 'smoldocling' or vlm_model == 'smolvlm':
+                pipeline_options.picture_description_options = smolvlm_picture_description
+                print("🤖 Using SmolVLM model for VLM")
+            else:
+                print(f"⚠️  Unknown VLM model '{vlm_model}', defaulting to Granite")
+                pipeline_options.picture_description_options = granite_picture_description
+            
+            # Custom prompt if provided
+            custom_prompt = simple_options.get('custom_prompt')
+            if custom_prompt and hasattr(pipeline_options.picture_description_options, 'prompt'):
+                pipeline_options.picture_description_options.prompt = custom_prompt
+                print(f"📝 Using custom VLM prompt: {custom_prompt[:50]}...")
+        
+        # Create format options
+        format_options = {
+            InputFormat.PDF: PdfFormatOption(pipeline_options=pipeline_options)
+        }
+        
+        return {"format_options": format_options}
 
     async def process_document_request(self, message):
         """Process a document processing request from NATS"""

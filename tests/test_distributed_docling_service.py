@@ -275,7 +275,7 @@ async def test_docling_with_picture_descriptions_and_json():
         print(f"🎯 VLM Configuration: {vlm_options}")
 
         # Process document with VLM options specified by publisher
-        result = await doc_service.process_document(s3_key, vlm_options=vlm_options)
+        result = await doc_service.process_document(s3_key, docling_options=vlm_options)
         
         assert result["status"] == "success"
         print("✅ Received VLM processing response!")
