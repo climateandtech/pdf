@@ -1,118 +1,186 @@
-# Docling Distributed Processing System
+# Distributed Processing System
 
-A distributed document processing system using Docling, NATS JetStream, and cloud storage for scalable PDF processing with configurable options.
+A **generic distributed processing system** using NATS JetStream for message routing and supporting multiple service types (PDF processing, image analysis, text processing, etc.).
 
-## Quick Start
+## 🏗️ Architecture Overview
 
-1. **Install dependencies**:
+```
+Infrastructure Server    Processing Servers         Client Applications
+     (NATS)              (GPU, CPU, etc.)           (Laptop, Web, etc.)
+        |                       |                           |
+   ┌────────────┐        ┌─────────────┐             ┌──────────────┐
+   │    NATS    │◄──────►│ PDF Worker  │             │   Your App   │
+   │ JetStream  │        │ Image Worker│◄───────────►│  (services.py│
+   │  Message   │        │ Text Worker │             │   thinktank2) │
+   │   Broker   │        │     ...     │             │      ...     │
+   └────────────┘        └─────────────┘             └──────────────┘
+        │                       │                           │
+   Pure Messaging         Business Logic              Submit Requests
+```
+
+## 📁 Directory Structure
+
+```
+ct/
+├── infrastructure/          # 🏗️ Infrastructure components
+│   └── nats-server/        # Pure NATS server (dedicated server)
+├── pdf/                    # 📄 PDF processing service (GPU server)
+│   ├── docling_worker.py   # Worker process
+│   ├── services.py         # Client library
+│   └── tests/             # Service tests
+└── future_services/        # 🔮 Add more services as needed
+    ├── image_processing/
+    ├── text_analysis/
+    └── audio_transcription/
+```
+
+## 🚀 Quick Start
+
+### 1. Infrastructure Setup (NATS Server)
+
+**On your dedicated NATS server:**
 ```bash
+cd infrastructure/nats-server/
+./setup.sh
+# Save the generated token - you'll need it for all services!
+```
+
+### 2. PDF Processing Service Setup (GPU Server)
+
+**On your GPU server:**
+```bash
+cd pdf/
+python -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
-```
 
-2. **Configure environment** (see `environment_config.txt` for template):
-```bash
+# Configure environment
 cp environment_config.txt .env
-# Edit .env with your S3 and NATS credentials
-```
+# Edit .env with NATS server IP and token
 
-3. **Start NATS server**:
-```bash
-nats-server -js
-```
-
-4. **Set up NATS streams**:
-```bash
-python setup_nats_streams.py
-```
-
-5. **Start the worker**:
-```bash
+# Start the worker
 python docling_worker.py
 ```
 
-6. **Process documents**:
-```python
-from services import DocumentService
+### 3. Client Integration (Your Laptop)
 
+**Connect your existing services.py:**
+```python
+# In your thinktank2 project
+from pdf.services import DocumentService
+
+# Configure to point to your NATS server
 doc_service = DocumentService()
 await doc_service.setup()
 
 result = await doc_service.process_document(
     s3_key="documents/my-file.pdf",
-    docling_options={
-        "format_options": {
-            InputFormat.PDF: PdfFormatOption(
-                pipeline_options=PdfPipelineOptions(
-                    do_ocr=True,
-                    ocr_engine=OcrEngine.EASYOCR
-                )
-            )
-        }
-    }
+    docling_options={...}
 )
 ```
 
-## Architecture
+## 🎛️ Configuration
 
-This system supports **two architectural approaches**:
-
-1. **NATS + S3 Storage** (current/recommended) - `docling_worker.py`, `services.py`
-2. **NATS Object Store** (alternative) - `worker_nats_objectstore.py`, `client_nats_objectstore.py`
-
-📖 **See [ARCHITECTURE.md](ARCHITECTURE.md) for detailed comparison and usage guidance.**
-
-## Key Features
-
-- **Generic Configuration**: Pass any valid Docling options through to workers
-- **Multiple Storage Options**: S3-compatible storage or NATS Object Store
-- **Scalable**: Distributed worker architecture via NATS messaging
-- **Flexible**: Support for all Docling input formats and processing options
-- **Well-tested**: Comprehensive unit and integration test suite
-
-## Core Files
-
-### Current Architecture (NATS + S3)
-- `docling_worker.py` - Main document processing worker
-- `services.py` - Client for submitting processing requests  
-- `s3_client.py` - Advanced S3 integration with async support
-- `s3_config.py` - S3 configuration management
-
-### Alternative Architecture (NATS Object Store)
-- `worker_nats_objectstore.py` - NATS Object Store worker
-- `client_nats_objectstore.py` - NATS Object Store client
-
-### Configuration & Examples
-- `docling_options_examples.py` - Examples of Docling configuration patterns
-- `config.py` - NATS configuration
-- `setup_nats_streams.py` - NATS stream initialization
-
-## Testing
-
-Run the comprehensive test suite:
-
-```bash
-# All tests
-pytest tests/ -v
-
-# Specific test categories
-pytest tests/test_docling_options.py -v          # Configuration tests
-pytest tests/test_distributed_docling_service.py -v  # End-to-end tests
+### Infrastructure Server (.env)
+```env
+# Pure NATS configuration - no service specifics
+NATS_TOKEN=your-generated-secure-token
 ```
 
-## Documentation
+### Processing Services (.env)
+```env
+# Points to your infrastructure
+NATS_URL=nats://your-nats-server-ip:4222
+NATS_TOKEN=your-generated-secure-token
 
-- **[ARCHITECTURE.md](ARCHITECTURE.md)** - Detailed architecture comparison
-- **[S3_INTEGRATION_README.md](S3_INTEGRATION_README.md)** - S3 setup guide
-- **`environment_config.txt`** - Environment configuration template
+# Service-specific settings
+AWS_ACCESS_KEY_ID=your-s3-credentials
+# ... etc
+```
 
-## Dependencies
+## 🔧 Service Types & Namespacing
 
-All dependencies are consolidated in `requirements.txt` including:
-- Core: `docling`, `nats-py`, `python-dotenv`
-- Storage: `aioboto3`, `boto3` for S3 support
-- Testing: `pytest`, `pytest-asyncio`, `reportlab`
-- Mocking: `moto[s3]` for S3 testing
+Each service type gets its own namespace on the shared NATS server:
+
+| Service Type | Stream Name | Subject Prefix | Worker Group |
+|-------------|-------------|----------------|--------------|
+| PDF Docling | `PDF_PROCESSING` | `pdf.docling.*` | `pdf_docling_workers` |
+| Image Processing | `IMAGE_PROCESSING` | `image.process.*` | `image_workers` |
+| Text Analysis | `TEXT_ANALYSIS` | `text.analyze.*` | `text_workers` |
+| Audio Transcription | `AUDIO_TRANSCRIPTION` | `audio.transcribe.*` | `audio_workers` |
+
+## 📋 Deployment Scenarios
+
+### Scenario 1: Simple Setup
+- **NATS Server**: 1 dedicated server
+- **PDF Processing**: 1 GPU server
+- **Clients**: Your laptop
+
+### Scenario 2: Production Setup
+- **NATS Cluster**: 3 servers (HA)
+- **PDF Workers**: Multiple GPU servers (auto-scaling)
+- **Image Workers**: Multiple CPU servers
+- **Clients**: Web applications, mobile apps, etc.
+
+### Scenario 3: Development
+- **NATS**: Local Docker container
+- **Workers**: Local processes
+- **Clients**: Local development
+
+## 🛡️ Security
+
+- **Token Authentication**: Secure token for NATS access
+- **Network Isolation**: Firewall rules for known IPs only
+- **TLS**: Optional TLS encryption for production
+- **Separate Concerns**: Infrastructure vs. business logic
+
+## 🔄 Adding New Services
+
+1. **Create service directory**: `mkdir new_service/`
+2. **Implement worker**: Use existing patterns from `pdf/`
+3. **Configure namespace**: Add to `generic_config.py`
+4. **Deploy**: On appropriate servers (GPU, CPU, etc.)
+5. **Connect**: All services use the same NATS infrastructure
+
+## 📖 Documentation
+
+- **[Infrastructure Setup](infrastructure/README.md)** - NATS server deployment
+- **[Architecture Guide](ARCHITECTURE.md)** - Detailed system design
+- **[PDF Service](pdf/README.md)** - PDF processing specifics
+
+## 🧪 Testing
+
+```bash
+# Test infrastructure
+cd infrastructure/nats-server/
+# Connection tests included in setup
+
+# Test PDF service
+cd pdf/
+pytest tests/ -v
+
+# Test end-to-end
+python -c "
+import asyncio
+from services import DocumentService
+
+async def test():
+    service = DocumentService()
+    await service.setup()
+    print('✅ Connected to distributed system!')
+
+asyncio.run(test())
+"
+```
 
 ---
 
-*For detailed architecture decisions and migration guidance, see [ARCHITECTURE.md](ARCHITECTURE.md)* 
+## 🎯 Key Benefits
+
+✅ **Scalable**: Add processing power by adding servers  
+✅ **Flexible**: Mix different service types on same infrastructure  
+✅ **Reliable**: Dedicated message infrastructure  
+✅ **Maintainable**: Clear separation of concerns  
+✅ **Future-proof**: Easy to add new processing capabilities  
+
+**Perfect for**: Multi-modal AI processing, distributed computing, microservices architecture 

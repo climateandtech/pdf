@@ -1,17 +1,20 @@
-# Copy this file to .env and fill in your AWS credentials
+# Environment Configuration Template
+# Copy this to .env and fill in your actual values
+
 # NATS Configuration
-NATS_URL=nats://localhost:4222
-NATS_STREAM_NAME=DOCUMENTS
-NATS_SUBJECT_PREFIX=docs
+NATS_URL=nats://your-nats-server-ip:4222
+NATS_TOKEN=your-secure-token-here-replace-with-random-64-char-string
 
-# AWS S3 Configuration  
-AWS_ACCESS_KEY_ID=your_aws_access_key_here
-AWS_SECRET_ACCESS_KEY=your_aws_secret_key_here
-AWS_DEFAULT_REGION=us-east-1
-S3_BUCKET=documents
+# S3 Configuration for Hetzner Object Storage
+AWS_ACCESS_KEY_ID=your-hetzner-access-key
+AWS_SECRET_ACCESS_KEY=your-hetzner-secret-key
+AWS_DEFAULT_REGION=fsn1
+S3_ENDPOINT_URL=https://fsn1.your-objectstorage.com
+S3_BUCKET_NAME=your-bucket-name
 
-# Optional: Use specific S3 endpoint (leave empty for real AWS)
-# S3_ENDPOINT_URL=
+# Optional: Additional NATS settings
+# NATS_CONNECT_TIMEOUT=10
+# NATS_MAX_RECONNECT_ATTEMPTS=10
 
 # Processing Configuration
 DOCLING_TIMEOUT=600

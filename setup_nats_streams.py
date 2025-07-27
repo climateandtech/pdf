@@ -16,7 +16,7 @@ async def setup_streams():
     print(f"📡 Connecting to NATS: {config.url}")
     
     # Connect to NATS
-    nc = await nats.connect(config.url)
+    nc = await nats.connect(config.connection_url)
     js = nc.jetstream()
     
     try:

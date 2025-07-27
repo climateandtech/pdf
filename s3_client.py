@@ -57,7 +57,7 @@ class S3DocumentClient:
     async def setup(self):
         """Initialize NATS connection and ensure S3 bucket exists"""
         # Connect to NATS
-        self.nc = await nats.connect(self.nats_config.url)
+        self.nc = await nats.connect(self.nats_config.connection_url)
         self.js = self.nc.jetstream()
         
         # Ensure bucket exists
