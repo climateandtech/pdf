@@ -505,6 +505,7 @@ class DoclingWorker:
             request = json.loads(message.data.decode())
             request_id = request.get("request_id")
             s3_key = request.get("s3_key")
+            backend_resource_id = request.get("backend_resource_id")
             docling_options = request.get("docling_options")  # Generic Docling configuration from publisher
             
             print(f"📨 Docling Worker: Received request {request_id} for {s3_key}")
@@ -596,6 +597,7 @@ class DoclingWorker:
             response = {
                 "request_id": request_id,
                 "status": "success",
+                "backend_resource_id": backend_resource_id,
                 "result": {
                     "text": markdown_content,
                     "markdown": markdown_content,
@@ -610,24 +612,7 @@ class DoclingWorker:
             
             print(f"✅ Docling Worker: Processing complete! Extracted {len(markdown_content)} characters")
             
-            # Ensure results stream exists
-            results_stream = f"{self.nats_config.stream_name}_results"
-            try:
-                await self.client.js.stream_info(results_stream)
-            except Exception as e:
-                if "not found" in str(e):
-                    print(f"🔧 Creating results stream: {results_stream}")
-                    await self.client.js.add_stream(
-                        name=results_stream,
-                        subjects=[f"{self.nats_config.subject_prefix}.result.*"],
-                        storage="memory",
-                        retention="limits",
-                        max_msgs=1000,
-                        max_bytes=100 * 1024 * 1024,  # 100MB
-                        max_age=3600  # Keep results for 1 hour
-                    )
-            
-            # Send response back via NATS
+            # Send response back via NATS (DOCUMENTS stream — same as platform-backend)
             await self.client.js.publish(
                 f"{self.nats_config.subject_prefix}.result.{request_id}",
                 json.dumps(response).encode()
@@ -647,27 +632,12 @@ class DoclingWorker:
             # Send error response
             error_response = {
                 "request_id": request.get("request_id", "unknown"),
-                "status": "error", 
+                "status": "error",
+                "backend_resource_id": request.get("backend_resource_id"),
                 "error": str(e)
             }
             
             try:
-                # Ensure results stream exists for error response
-                results_stream = f"{self.nats_config.stream_name}_results"
-                try:
-                    await self.client.js.stream_info(results_stream)
-                except Exception as stream_e:
-                    if "not found" in str(stream_e):
-                        await self.client.js.add_stream(
-                            name=results_stream,
-                            subjects=[f"{self.nats_config.subject_prefix}.result.*"],
-                            storage="memory",
-                            retention="limits",
-                            max_msgs=1000,
-                            max_bytes=100 * 1024 * 1024,
-                            max_age=3600
-                        )
-                
                 await self.client.js.publish(
                     f"{self.nats_config.subject_prefix}.result.{request.get('request_id', 'unknown')}",
                     json.dumps(error_response).encode()
@@ -681,24 +651,29 @@ class DoclingWorker:
         """Start listening for processing requests"""
         print(f"🎧 Docling Worker: Listening for requests on '{self.nats_config.subject_prefix}.process.*'")
         
-        # Ensure stream exists, create if needed
+        # Stream must exist on broker with docs.process.* (see config/nats_streams.yaml).
+        # Do not auto-create a workqueue-only stream — it breaks multi-consumer docs.result.
         try:
-            await self.client.js.stream_info(self.nats_config.stream_name)
-            print(f"✅ Stream {self.nats_config.stream_name} exists")
-        except Exception as e:
-            if "not found" in str(e):
-                print(f"🔧 Creating missing stream: {self.nats_config.stream_name}")
-                await self.client.js.add_stream(
-                    name=self.nats_config.stream_name,
-                    subjects=[f"{self.nats_config.subject_prefix}.process.*"],
-                    storage="memory",
-                    retention="workqueue",
-                    max_msgs=1000,
-                    max_bytes=100 * 1024 * 1024  # 100MB
+            info = await self.client.js.stream_info(self.nats_config.stream_name)
+            subjects = list(info.config.subjects or [])
+            need = f"{self.nats_config.subject_prefix}.process.*"
+            if not any(
+                s in (need, f"{self.nats_config.subject_prefix}.>", "docs.>")
+                for s in subjects
+            ):
+                print(
+                    f"⚠️  Stream {self.nats_config.stream_name} subjects={subjects} "
+                    f"may not capture {need}; run fix_nats_documents_stream.py on broker"
                 )
-                print(f"✅ Created stream: {self.nats_config.stream_name}")
             else:
-                raise
+                print(f"✅ Stream {self.nats_config.stream_name} exists: {subjects}")
+        except Exception as e:
+            if "not found" in str(e).lower():
+                raise RuntimeError(
+                    f"JetStream stream {self.nats_config.stream_name} missing — "
+                    "run coolify-provisioning/scripts/fix_nats_documents_stream.py"
+                ) from e
+            raise
         
         # Subscribe to processing requests
         subscription = await self.client.js.pull_subscribe(
