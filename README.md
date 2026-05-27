@@ -58,9 +58,16 @@ pip install -r requirements.txt
 cp environment_config.txt .env
 # Edit .env with NATS server IP and token
 
-# Start the worker
-python docling_worker.py
+# Start docling worker (docs.process.*)
+./start_worker.sh
+
+# Optional: GLiNER KG infer (kg.infer) — same venv + extra deps
+pip install -r requirements-gliner.txt
+./start_kg_gliner.sh
 ```
+
+GPU deploy (both workers): push to `climateandtech/pdf` `main`, then from `coolify-provisioning/` run `./gpu-deploy-worker.sh` and `./gpu-sync-nats-env.sh`.
+Platform calls `kg.infer` when `KG_EXTRACT_ON_GPU=1` (no separate platform clone on GPU).
 
 ### 3. Client Integration (Your Laptop)
 

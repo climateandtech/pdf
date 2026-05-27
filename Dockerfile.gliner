@@ -1,0 +1,20 @@
+# Build from repo root: docker build -f pdf/Dockerfile.gliner pdf
+FROM python:3.12-slim
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements.txt requirements-gliner.txt ./
+RUN pip install --no-cache-dir -r requirements.txt -r requirements-gliner.txt
+
+COPY config.py s3_config.py generic_config.py ./
+COPY kg_gliner/ ./kg_gliner/
+COPY kg_gliner_worker.py ./
+
+ENV KG_GLINER_INFER_SUBJECT=kg.infer
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python", "kg_gliner_worker.py"]

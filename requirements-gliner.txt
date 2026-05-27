@@ -1,0 +1,3 @@
+# GLiNER GPU infer worker (install on top of requirements.txt in a venv or separate venv)
+gliner>=0.2.0,<0.3.0
+torch>=2.2.0,<2.7.0
