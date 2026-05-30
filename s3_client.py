@@ -252,6 +252,19 @@ class S3DocumentClient:
             return len(source.encode())
         return 0
 
+    async def upload_bytes(
+        self, s3_key: str, body: bytes, *, content_type: str = "application/octet-stream"
+    ) -> str:
+        """Upload raw bytes to S3 (e.g. large docling JSON results)."""
+        async with self.s3_client() as s3:
+            await s3.put_object(
+                Bucket=self.s3_config.bucket_name,
+                Key=s3_key,
+                Body=body,
+                ContentType=content_type,
+            )
+        return s3_key
+
     async def download_result(self, s3_key: str, local_path: Path = None) -> Union[bytes, Path]:
         """Download processed result from S3"""
         async with self.s3_client() as s3:

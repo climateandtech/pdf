@@ -27,5 +27,9 @@ DEBUG=true
 DOCLING_GPU_PROFILE=full
 # DOCLING_GPU_CAP_GB=5
 
-# Optional: push worker.log to Loki when GPU is not on Coolify fluent-bit drain
-# LOKI_PUSH_URL=https://your-loki/api/v1/push
+# Large docling results: inline NATS when under NATS_SAFE_INLINE_BYTES (~900KB), else S3 spill
+# NATS_SAFE_INLINE_BYTES=900000
+
+# Optional: push worker.log to Loki (set via ./gpu-sync-loki-env.sh from coolify-provisioning)
+# LOKI_PUSH_URL=https://your-grafana/loki/api/v1/push
+# LOKI_PUSH_LABELS=job=gpu-docling,host=176.9.98.94,service=docling_worker

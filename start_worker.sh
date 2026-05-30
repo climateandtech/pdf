@@ -83,8 +83,8 @@ if kill -0 "$WORKER_PID" 2>/dev/null; then
     echo "🎉 Worker is running and healthy!"
     echo "📡 Ready to process documents via NATS (DOCLING_GPU_PROFILE=$DOCLING_GPU_PROFILE)"
     if [[ -n "${LOKI_PUSH_URL:-}" ]]; then
-      nohup python scripts/ship_worker_logs_loki.py >> loki-ship.log 2>&1 &
-      echo "📊 Loki log shipper started (LOKI_PUSH_URL set)"
+      nohup python scripts/ship_worker_logs_loki.py --follow >> loki-ship.log 2>&1 &
+      echo "📊 Loki log shipper started (LOKI_PUSH_URL set, --follow)"
     fi
 else
     echo "❌ Worker failed to start. Check logs:"

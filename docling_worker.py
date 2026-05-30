@@ -19,6 +19,7 @@ from s3_client import S3DocumentClient
 from s3_config import S3Config
 from config import NatsConfig
 from worker_runtime import bootstrap_gpu, cleanup_gpu_memory
+from result_publish import publish_docling_result
 
 logger = logging.getLogger(__name__)
 
@@ -620,14 +621,10 @@ class DoclingWorker:
             }
             
             print(f"✅ Docling Worker: Processing complete! Extracted {len(markdown_content)} characters")
-            
-            # Send response back via NATS (DOCUMENTS stream — same as platform-backend)
-            await self.client.js.publish(
-                f"{self.nats_config.subject_prefix}.result.{request_id}",
-                json.dumps(response).encode()
-            )
-            
-            print(f"📤 Docling Worker: Sent response for {request_id}")
+
+            subject = f"{self.nats_config.subject_prefix}.result.{request_id}"
+            mode = await publish_docling_result(self.client, subject, response)
+            print(f"📤 Docling Worker: Sent response for {request_id} ({mode})")
             
             # Acknowledge the message
             await message.ack()
@@ -644,10 +641,8 @@ class DoclingWorker:
             }
 
             try:
-                await self.client.js.publish(
-                    f"{self.nats_config.subject_prefix}.result.{request_id}",
-                    json.dumps(error_response).encode(),
-                )
+                subject = f"{self.nats_config.subject_prefix}.result.{request_id}"
+                await publish_docling_result(self.client, subject, error_response)
             except Exception:
                 pass
 

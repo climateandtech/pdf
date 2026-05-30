@@ -57,6 +57,17 @@ def push_lines(lines: list[str]) -> None:
 
 
 def main() -> int:
+    follow = "--follow" in sys.argv or os.getenv("LOKI_SHIP_FOLLOW", "").lower() in ("1", "true", "yes")
+    if follow:
+        interval = float(os.getenv("LOKI_SHIP_INTERVAL", "5"))
+        while True:
+            run_once()
+            time.sleep(interval)
+        return 0
+    return run_once()
+
+
+def run_once() -> int:
     if not LOG_FILE.is_file():
         return 0
 
@@ -69,8 +80,9 @@ def main() -> int:
     if not chunk:
         return 0
 
-    lines = [ln.rstrip("\n") for ln in chunk[-BATCH_LINES:] if ln.strip()]
-    push_lines(lines)
+    lines = [ln.rstrip("\n") for ln in chunk if ln.strip()]
+    for i in range(0, len(lines), BATCH_LINES):
+        push_lines(lines[i : i + BATCH_LINES])
     STATE_FILE.write_text(str(new_offset))
     return 0
 
