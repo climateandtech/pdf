@@ -14,13 +14,11 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from docling.document_converter import DocumentConverter, PdfFormatOption
-from docling.datamodel.base_models import InputFormat
-from docling.datamodel.pipeline_options import PdfPipelineOptions, granite_picture_description
 
 from s3_client import S3DocumentClient
 from s3_config import S3Config
 from config import NatsConfig
+from worker_runtime import bootstrap_gpu, cleanup_gpu_memory
 
 logger = logging.getLogger(__name__)
 
@@ -32,11 +30,10 @@ class DoclingWorker:
         self.s3_config = S3Config()
         self.nats_config = NatsConfig()
         self.client = S3DocumentClient(self.s3_config, self.nats_config)
-        
-        # Standard document converter - VLM will be configured per-request
+
+        # DocumentConverter is created per request (after bootstrap_gpu loads torch/docling)
         print("🤖 Docling Worker: Dynamic VLM configuration enabled")
         print("📋 VLM options will be specified by the publisher for each request")
-        self.doc_converter = DocumentConverter()
         
     async def setup(self):
         """Initialize connections"""
@@ -57,10 +54,15 @@ class DoclingWorker:
         """
         if not docling_options:
             print("📋 Using standard DocumentConverter (no custom options)")
+            from docling.document_converter import DocumentConverter
+
             return DocumentConverter()
-        
+
         try:
+            from memory_patch import get_memory_optimized_options
+
             print(f"🎛️  Configuring DocumentConverter with options: {list(docling_options.keys())}")
+            docling_options = get_memory_optimized_options(docling_options)
             
             # Check if we have simple JSON options (sent over NATS)
             if self._is_simple_options(docling_options):
@@ -71,6 +73,8 @@ class DoclingWorker:
                 docling_config = docling_options
             
             # Create DocumentConverter with converted options
+            from docling.document_converter import DocumentConverter
+
             converter = DocumentConverter(**docling_config)
             
             print("✅ DocumentConverter configured successfully")
@@ -79,6 +83,8 @@ class DoclingWorker:
         except Exception as e:
             print(f"⚠️  DocumentConverter configuration failed: {e}")
             print("🔄 Falling back to standard converter")
+            from docling.document_converter import DocumentConverter
+
             return DocumentConverter()
     
     def _is_simple_options(self, options):
@@ -500,6 +506,9 @@ class DoclingWorker:
 
     async def process_document_request(self, message):
         """Process a document processing request from NATS"""
+        request_id = "unknown"
+        temp_file: Path | None = None
+        request: dict = {}
         try:
             # Parse the request
             request = json.loads(message.data.decode())
@@ -520,7 +529,7 @@ class DoclingWorker:
             temp_file = Path(f"/tmp/{request_id}.pdf")
             with open(temp_file, 'wb') as f:
                 f.write(file_content)
-                
+
             print(f"🔬 Docling Worker: Processing PDF with docling...")
             
             # **DYNAMIC DOCLING CONFIGURATION**
@@ -622,31 +631,32 @@ class DoclingWorker:
             
             # Acknowledge the message
             await message.ack()
-            
-            # Cleanup
-            temp_file.unlink()
-            
+
         except Exception as e:
             print(f"❌ Docling Worker: Error processing request: {e}")
-            
-            # Send error response
+            cleanup_gpu_memory(force=True)
+
             error_response = {
-                "request_id": request.get("request_id", "unknown"),
+                "request_id": request_id,
                 "status": "error",
                 "backend_resource_id": request.get("backend_resource_id"),
-                "error": str(e)
+                "error": str(e),
             }
-            
+
             try:
                 await self.client.js.publish(
-                    f"{self.nats_config.subject_prefix}.result.{request.get('request_id', 'unknown')}",
-                    json.dumps(error_response).encode()
+                    f"{self.nats_config.subject_prefix}.result.{request_id}",
+                    json.dumps(error_response).encode(),
                 )
-            except:
+            except Exception:
                 pass
-                
+
             await message.nak()
-    
+        finally:
+            if temp_file is not None and temp_file.exists():
+                temp_file.unlink(missing_ok=True)
+            cleanup_gpu_memory(force=False)
+
     async def start_listening(self):
         """Start listening for processing requests"""
         print(f"🎧 Docling Worker: Listening for requests on '{self.nats_config.subject_prefix}.process.*'")
@@ -702,6 +712,20 @@ class DoclingWorker:
                 except asyncio.TimeoutError:
                     print("⏱️  Docling Worker: Timeout, continuing...")
                     continue
+                except Exception as loop_err:
+                    from nats.errors import ConnectionClosedError
+
+                    if isinstance(loop_err, ConnectionClosedError):
+                        print(f"⚠️  NATS connection closed: {loop_err} — reconnecting...")
+                        await self.client.close()
+                        await self.client.setup()
+                        subscription = await self.client.js.pull_subscribe(
+                            subject=f"{self.nats_config.subject_prefix}.process.*",
+                            durable="docling_worker",
+                            stream=self.nats_config.stream_name,
+                        )
+                        continue
+                    raise
                     
         except KeyboardInterrupt:
             print(f"\n👋 Docling Worker: Interrupted by user")
@@ -714,7 +738,12 @@ async def main():
     """Main worker entry point"""
     print("🚀 Starting Docling Worker Service")
     print("=" * 50)
-    
+
+    profile = bootstrap_gpu()
+    from memory_patch import setup_memory_optimization
+
+    setup_memory_optimization(profile)
+
     worker = DoclingWorker()
     await worker.setup()
     await worker.start_listening()

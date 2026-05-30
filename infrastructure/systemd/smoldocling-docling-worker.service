@@ -1,0 +1,21 @@
+[Unit]
+Description=PDF Docling NATS worker (smoldocling)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/home/smoldocling/apps/pdf
+EnvironmentFile=-/home/smoldocling/apps/pdf/.env
+Environment=DOCLING_GPU_PROFILE=full
+ExecStart=/home/smoldocling/apps/pdf/venv/bin/python /home/smoldocling/apps/pdf/docling_worker.py
+Restart=always
+RestartSec=10
+# Log to worker.log (same as start_worker.sh) + journald
+StandardOutput=append:/home/smoldocling/apps/pdf/worker.log
+StandardError=append:/home/smoldocling/apps/pdf/worker.log
+
+[Install]
+WantedBy=default.target

@@ -19,4 +19,13 @@ S3_BUCKET_NAME=your-bucket-name
 # Processing Configuration
 DOCLING_TIMEOUT=600
 USE_S3_STORAGE=true
-DEBUG=true 
+DEBUG=true
+
+# GPU memory profile (docling_worker.py / worker_runtime.py)
+# full | a | nats  → 20gb_nats (path A: shared GPU with Ollama)
+# capped_5gb | b | 5gb → ~5GB VRAM cap (path B benchmark)
+DOCLING_GPU_PROFILE=full
+# DOCLING_GPU_CAP_GB=5
+
+# Optional: push worker.log to Loki when GPU is not on Coolify fluent-bit drain
+# LOKI_PUSH_URL=https://your-loki/api/v1/push

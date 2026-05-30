@@ -48,7 +48,24 @@ fi
 echo "🔧 Activating virtual environment..."
 source venv/bin/activate
 
-echo "📋 Starting worker in background..."
+# GPU profile: full (path A / NATS) or capped_5gb (path B benchmark)
+if [[ -f ".env" ]]; then
+  set -a
+  # shellcheck disable=SC1091
+  source .env
+  set +a
+fi
+export DOCLING_GPU_PROFILE="${DOCLING_GPU_PROFILE:-full}"
+
+# Prefer systemd when installed (Restart=always)
+if systemctl --user is-enabled smoldocling-docling-worker.service &>/dev/null; then
+  echo "📦 Using systemd user unit (Restart=always)..."
+  systemctl --user restart smoldocling-docling-worker.service
+  systemctl --user status smoldocling-docling-worker.service --no-pager || true
+  exit 0
+fi
+
+echo "📋 Starting worker in background (install systemd: ./scripts/install_systemd_worker.sh)..."
 nohup python docling_worker.py >> "$LOG_FILE" 2>&1 &
 WORKER_PID=$!
 
@@ -64,7 +81,11 @@ echo "🔍 PID file: $PID_FILE"
 sleep 3
 if kill -0 "$WORKER_PID" 2>/dev/null; then
     echo "🎉 Worker is running and healthy!"
-    echo "📡 Ready to process documents via NATS"
+    echo "📡 Ready to process documents via NATS (DOCLING_GPU_PROFILE=$DOCLING_GPU_PROFILE)"
+    if [[ -n "${LOKI_PUSH_URL:-}" ]]; then
+      nohup python scripts/ship_worker_logs_loki.py >> loki-ship.log 2>&1 &
+      echo "📊 Loki log shipper started (LOKI_PUSH_URL set)"
+    fi
 else
     echo "❌ Worker failed to start. Check logs:"
     tail -20 "$LOG_FILE"
