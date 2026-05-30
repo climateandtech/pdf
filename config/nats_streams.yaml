@@ -1,0 +1,95 @@
+# NATS stream layout for Coolify ct-nats (prod :4222).
+# Keep in sync with ct-platform/backend/config/nats_streams.yaml when platform changes subjects.
+
+nats_mode: "jetstream"
+large_message_threshold: 1048576
+max_message_size: 65536
+
+streams:
+  INDEX:
+    name: "INDEX"
+    subjects: ["index.command.*", "index.notify.*"]
+    storage: "file"
+    retention: "limits"
+    max_age: 604800
+    max_msgs: 100000
+    max_consumers: -1
+    replicas: 1
+    description: "Slack bot index ingest/search/backlog and notifications"
+
+  DOCUMENTS:
+    name: "DOCUMENTS"
+    subjects: ["docs.upload.*", "docs.process.*", "docs.result.*", "document.*"]
+    storage: "file"
+    retention: "limits"
+    max_age: 86400
+    max_msgs: 100000
+    max_consumers: -1
+    replicas: 1
+    description: "Document uploads, processing, and results"
+
+  CHUNKS:
+    name: "CHUNKS"
+    subjects: ["chunks.*"]
+    storage: "memory"
+    retention: "limits"
+    max_age: 3600
+    max_msgs: 50000
+    max_consumers: -1
+    replicas: 1
+    description: "Chunk-based processing"
+
+  WORKFLOW:
+    name: "WORKFLOW"
+    subjects:
+      - "workflow.command.*"
+      - "workflow.stage.*"
+      - "workflow.smoke.*"
+      - "workflow.notify.*"
+    storage: "file"
+    retention: "limits"
+    max_age: 604800
+    max_msgs: 100000
+    max_consumers: -1
+    replicas: 1
+    description: "Platform workflow engine"
+
+  KG:
+    name: "KG"
+    subjects:
+      - "kg.command.*"
+      - "kg.stage.*"
+      - "kg.unit.*"
+      - "kg.notify.*"
+    storage: "file"
+    retention: "limits"
+    max_age: 604800
+    max_msgs: 200000
+    max_consumers: -1
+    replicas: 1
+    description: "Knowledge-graph pipeline"
+
+  LLM_REQUESTS:
+    name: "LLM_REQUESTS"
+    subjects: ["llm.*"]
+    storage: "file"
+    retention: "limits"
+    max_age: 86400
+    max_msgs: 50000
+    max_consumers: -1
+    replicas: 1
+    description: "LLM request/response"
+
+  ANALYSIS:
+    name: "ANALYSIS"
+    subjects: ["analysis.result.*", "analysis.job.*"]
+    storage: "file"
+    retention: "limits"
+    max_age: 604800
+    max_msgs: 50000
+    max_consumers: -1
+    replicas: 1
+    description: "Report Analyst analysis results"
+
+auto_create:
+  enabled: false
