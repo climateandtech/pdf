@@ -744,6 +744,11 @@ async def main():
 
     setup_memory_optimization(profile)
 
+    # Warm up docling after torch/torchvision (avoid per-request circular import)
+    from docling.document_converter import DocumentConverter
+
+    DocumentConverter()
+
     worker = DoclingWorker()
     await worker.setup()
     await worker.start_listening()

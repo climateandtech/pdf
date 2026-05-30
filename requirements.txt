@@ -2,7 +2,8 @@
 # Pin torch/torchvision together (mismatch causes torchvision.extension ImportError on GPU)
 torch==2.6.0
 torchvision==0.21.0
-docling>=2.96.0,<3
+# Pin: 2.96+ uses docling-slim without document_converter (breaks worker)
+docling>=2.42.0,<2.43
 nats-py>=2.6.0
 PyYAML>=6.0
 python-dotenv>=1.0.0

@@ -6,7 +6,6 @@ Simple integration patch that adds GPU memory optimization to your existing docl
 Just import and call setup_memory_optimization() at the start of your worker.
 """
 import os
-import torch
 import gc
 import logging
 from typing import Dict, Optional, Any
@@ -69,7 +68,8 @@ class MemoryOptimizationPatch:
     
     def cleanup_memory(self, force: bool = False):
         """Clean up GPU memory (call this after processing documents)"""
-        
+        import torch
+
         self.cleanup_counter += 1
         
         if force or self.cleanup_counter >= self.cleanup_interval:
@@ -94,6 +94,8 @@ class MemoryOptimizationPatch:
     
     def _print_memory_status(self):
         """Print current memory status"""
+        import torch
+
         if torch.cuda.is_available():
             device = torch.cuda.current_device()
             allocated = torch.cuda.memory_allocated(device) / 1024**3
@@ -105,6 +107,8 @@ class MemoryOptimizationPatch:
     
     def monitor_memory_usage(self):
         """Check if memory usage is getting high"""
+        import torch
+
         if not torch.cuda.is_available():
             return False
             
