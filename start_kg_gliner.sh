@@ -24,6 +24,13 @@ if [[ ! -f ".env" ]]; then
   exit 1
 fi
 
+if systemctl --user is-enabled smoldocling-kg-gliner-worker.service &>/dev/null; then
+  echo "Using systemd user unit smoldocling-kg-gliner-worker..."
+  systemctl --user restart smoldocling-kg-gliner-worker.service
+  systemctl --user status smoldocling-kg-gliner-worker.service --no-pager || true
+  exit 0
+fi
+
 if [[ -f "$PID_FILE" ]]; then
   OLD_PID=$(cat "$PID_FILE")
   if kill -0 "$OLD_PID" 2>/dev/null; then

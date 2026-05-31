@@ -1,0 +1,19 @@
+[Unit]
+Description=KG GLiNER NATS infer worker (smoldocling)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/home/smoldocling/apps/pdf
+EnvironmentFile=-/home/smoldocling/apps/pdf/.env
+ExecStart=/home/smoldocling/apps/pdf/venv/bin/python /home/smoldocling/apps/pdf/kg_gliner_worker.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/smoldocling/apps/pdf/kg_gliner.log
+StandardError=append:/home/smoldocling/apps/pdf/kg_gliner.log
+
+[Install]
+WantedBy=default.target
