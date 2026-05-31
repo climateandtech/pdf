@@ -13,7 +13,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from nemotron_ocr import NemotronConfig, NemotronOcrService, probe_nemotron_gpu
+from nemotron_service import NemotronConfig, NemotronOcrService, probe_nemotron_gpu
 
 
 def _page_indices_arg(raw: str, page_count: int) -> list[int]:

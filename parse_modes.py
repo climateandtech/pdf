@@ -33,11 +33,20 @@ RICH: dict[str, Any] = {
     "generate_picture_images": True,
 }
 
+NEMOTRON_ENRICH: dict[str, Any] = {
+    **BASELINE,
+    "do_ocr": True,
+    "ocr_engine": "nemotron",
+    "ocr_merge_level": "word",
+    "force_backend_text": False,
+}
+
 PARSE_MODES: dict[str, dict[str, Any]] = {
     "baseline": BASELINE,
     "fast_text": FAST_TEXT,
     "standard": STANDARD,
     "rich": RICH,
+    "nemotron_enrich": NEMOTRON_ENRICH,
 }
 
 

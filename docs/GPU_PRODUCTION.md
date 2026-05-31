@@ -2,6 +2,8 @@
 
 Production PDF workers run as **`smoldocling`** at `/home/smoldocling/apps/pdf`. Ollama embeddings run under **`marc`** on the same host.
 
+Laptop deploy scripts live in **`coolify-provisioning/`** (sibling repo): `gpu-setup-production.sh`, `gpu-deploy-worker.sh`, `gpu-sync-nats-env.sh`.
+
 ## Architecture
 
 | Component | User | Process | NATS |
@@ -21,23 +23,18 @@ Both workers use **user systemd** with `Restart=always`. Linger must be enabled 
 | `smoldocling-docling-worker.service` | `worker.log` |
 | `smoldocling-kg-gliner-worker.service` | `kg_gliner.log` |
 
-Unit files live in `infrastructure/systemd/` and are installed by `scripts/install_systemd_services.sh`.
+Unit files: `infrastructure/systemd/`. Install with `scripts/install_systemd_services.sh` or one-shot `scripts/setup_production_services.sh`.
 
-### One-time migrate (laptop)
-
-From `coolify-provisioning/`:
+### One-time migrate (from laptop)
 
 ```bash
+cd coolify-provisioning
 ./gpu-setup-production.sh
 ```
 
-This:
+This enables linger, git-pulls this repo on GPU, installs units, stops legacy nohup/tmux workers, and starts systemd.
 
-1. Runs `loginctl enable-linger smoldocling` (root)
-2. Runs `gpu-deploy-worker.sh --no-restart` (git pull, `pip install`, unit tests)
-3. Runs `scripts/setup_production_services.sh` on GPU (install units, stop legacy nohup/tmux, start systemd)
-
-### Routine deploy (laptop)
+### Routine deploy (from laptop)
 
 ```bash
 cd coolify-provisioning
@@ -46,8 +43,6 @@ cd coolify-provisioning
 ```
 
 ### On GPU (smoldocling)
-
-Use `XDG_RUNTIME_DIR` when SSH does not provide a user bus:
 
 ```bash
 export XDG_RUNTIME_DIR=/run/user/$(id -u)
@@ -67,7 +62,8 @@ Production **`venv/`** stays on Docling 2.42 until benchmarks pass. Upgrade cand
 | Venv | Purpose | Setup script |
 |------|---------|--------------|
 | `venv-benchmark/` | Docling ≥2.43 smoke + parser benchmarks | `scripts/setup_isolated_benchmark_env.sh` |
-| `venv-nemotron/` | Nemotron OCR v2 enrichment (Python 3.12) | `scripts/setup_nemotron_gpu.sh` |
+| `venv-benchmark/` + Nemotron OCR | Docling-native Nemotron OCR (pass 2) | `scripts/setup_docling_nemotron_ocr.sh` |
+| `venv-nemotron/` | Legacy standalone HF package (optional fallback) | `scripts/setup_nemotron_gpu.sh` |
 
 ### Docling upgrade candidate (isolated)
 
@@ -84,7 +80,22 @@ DOCLING_GPU_PROFILE=capped_5gb ./venv-benchmark/bin/python \
 
 Do **not** point `smoldocling-docling-worker.service` at `venv-benchmark` until strategy decision and production pin change.
 
-### Nemotron OCR v2 (isolated)
+### Docling-native Nemotron OCR (pass 2 enrichment)
+
+Preferred over standalone `venv-nemotron` — uses `NemotronOcrOptions` inside Docling ([GTC integration](https://www.docling.ai/blog/20260311_00_docling_at_gtc/)):
+
+```bash
+cd ~/apps/pdf
+./scripts/setup_isolated_benchmark_env.sh
+./scripts/setup_docling_nemotron_ocr.sh
+
+DOCLING_GPU_PROFILE=capped_5gb ./venv-benchmark/bin/python \
+  scripts/docling_capability_smoke.py --pdf tests/fixtures/minimal.pdf --mode nemotron_enrich
+```
+
+Platform/worker: send parse mode `nemotron_enrich` or `ocr_engine=nemotron` in docling options when enrichment detection flags OCR need.
+
+### Legacy standalone Nemotron (optional fallback)
 
 Requires **Python 3.12**, CUDA toolkit on PATH for the C++ extension build:
 
@@ -96,7 +107,7 @@ cd ~/apps/pdf
   --pdf tests/fixtures/minimal.pdf --pages 0
 ```
 
-Platform default enrichment backend is `nemotron` (see `ct-platform` `ENRICHMENT_BACKEND`); GPU worker wiring for pass-2 enrichment is separate from the NATS Docling worker.
+Platform default enrichment backend is `nemotron` (`ct-platform` `ENRICHMENT_BACKEND`); GPU wrapper is `nemotron_service.py` (standalone `venv-nemotron`) until Docling ships `NemotronOcrOptions` on PyPI.
 
 ## Environment
 
@@ -116,11 +127,14 @@ Key vars: `NATS_URL`, `NATS_TOKEN`, `DOCLING_GPU_PROFILE` (production unit sets 
 |---------|--------|
 | `Failed to connect to bus: No medium found` | Enable linger; use `XDG_RUNTIME_DIR=/run/user/1003` |
 | Worker not running after reboot | `loginctl show-user smoldocling -p Linger` → `yes` |
-| Duplicate workers | `./setup_production_services.sh` stops nohup PIDs before systemd start |
-| `nats: maximum payload exceeded` | Ensure pdf `main` includes S3 spill for large results (`result_publish.py`) |
-| Ollama bge-m3 NaN | `OLLAMA_FLASH_ATTENTION=false` on marc Ollama (see `gpu-fix-ollama-bge-m3-nan.sh`) |
+| Duplicate workers | `./scripts/setup_production_services.sh` stops nohup PIDs before systemd start |
+| `nats: maximum payload exceeded` | Ensure `main` includes S3 spill for large results (`result_publish.py`) |
+| Ollama bge-m3 NaN | `OLLAMA_FLASH_ATTENTION=false` on marc Ollama (`coolify-provisioning/gpu-fix-ollama-bge-m3-nan.sh`) |
+| GPU git pull blocked by local edits | `gpu-deploy-worker.sh --reset` from laptop or stash on GPU |
 
-## Related docs
+## SSH access
 
-- Laptop ops: `coolify-provisioning/GPU-DEPLOY.md`
-- Indexing throughput plan: multistage pipeline, parser/chunker benchmarks in `ct-platform`
+```bash
+ssh gpu   # root; Host gpu in ~/.ssh/config → 176.9.98.94
+sudo -u smoldocling bash -lc 'cd ~/apps/pdf && git status'
+```

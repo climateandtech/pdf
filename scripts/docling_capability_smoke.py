@@ -34,6 +34,17 @@ def _probe_native_chunkers() -> dict[str, bool]:
     return probes
 
 
+def _probe_nemotron_ocr() -> dict[str, bool]:
+    probes = {"nemotron_ocr_options": False}
+    try:
+        from docling.datamodel.pipeline_options import NemotronOcrOptions  # noqa: F401
+
+        probes["nemotron_ocr_options"] = True
+    except ImportError:
+        pass
+    return probes
+
+
 def _convert(pdf_path: Path, mode: str) -> dict:
     from docling_worker import DoclingWorker
 
@@ -82,6 +93,7 @@ def main() -> int:
         "docling_version": getattr(docling, "__version__", "unknown"),
         "gpu_profile": bootstrap_gpu(args.gpu_profile),
         "native_chunkers": _probe_native_chunkers(),
+        "nemotron_ocr": _probe_nemotron_ocr(),
         "pdf": str(args.pdf.resolve()),
         "modes_tested": [],
     }

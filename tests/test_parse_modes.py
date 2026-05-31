@@ -19,5 +19,12 @@ def test_get_parse_mode_returns_copy():
 
 
 def test_all_modes_registered():
-    assert set(PARSE_MODES) >= {"baseline", "fast_text", "standard", "rich"}
+    assert set(PARSE_MODES) >= {"baseline", "fast_text", "standard", "rich", "nemotron_enrich"}
     assert FAST_TEXT is PARSE_MODES["fast_text"]
+
+
+def test_nemotron_enrich_uses_docling_native_ocr_engine():
+    mode = get_parse_mode("nemotron_enrich")
+    assert mode["do_ocr"] is True
+    assert mode["ocr_engine"] == "nemotron"
+    assert mode["do_table_structure"] is True

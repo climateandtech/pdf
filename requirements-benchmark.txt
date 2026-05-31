@@ -1,4 +1,3 @@
-# Isolated benchmark venv — production worker stays on pdf/requirements.txt (docling<2.43).
--r requirements.txt
-# Upgrade candidate for isolated benchmark env only (do not install on live smoldocling worker).
-docling>=2.43.0,<2.50
+# Upgraded Docling for isolated benchmark venv only (install via setup_isolated_benchmark_env.sh).
+# Do not -r requirements.txt here — production pins docling<2.43 and pip cannot resolve both.
+docling>=2.43.0

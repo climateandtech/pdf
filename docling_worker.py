@@ -104,6 +104,7 @@ class DoclingWorker:
             'do_table_structure', 'do_ocr',
             
             # === OCR OPTIONS (REAL) ===
+            'ocr_engine', 'ocr_merge_level',
             'ocr_languages', 'force_full_page_ocr', 'ocr_bitmap_area_threshold', 
             'ocr_use_gpu', 'ocr_confidence_threshold', 'ocr_model_storage_directory',
             'ocr_recog_network', 'ocr_download_enabled',
@@ -275,9 +276,25 @@ class DoclingWorker:
         if 'do_ocr' in simple_options:
             pipeline_options.do_ocr = bool(simple_options['do_ocr'])
             print(f"🔍 OCR: {pipeline_options.do_ocr}")
-        
-        # Advanced OCR Options - customize ocr_options if any OCR settings are provided
-        if any(key.startswith('ocr_') for key in simple_options.keys()) or 'force_full_page_ocr' in simple_options:
+
+        ocr_engine = str(simple_options.get("ocr_engine", "")).strip().lower()
+        if ocr_engine == "nemotron":
+            try:
+                from docling.datamodel.pipeline_options import NemotronOcrOptions
+            except ImportError as exc:
+                raise ValueError(
+                    "ocr_engine=nemotron requires docling[nemotron-ocr] (Docling >=2.96). "
+                    "Run scripts/setup_docling_nemotron_ocr.sh in venv-benchmark."
+                ) from exc
+            merge_level = str(simple_options.get("ocr_merge_level", "word"))
+            nemotron_opts = NemotronOcrOptions(merge_level=merge_level)
+            if "force_full_page_ocr" in simple_options:
+                nemotron_opts.force_full_page_ocr = bool(simple_options["force_full_page_ocr"])
+            pipeline_options.do_ocr = True
+            pipeline_options.ocr_options = nemotron_opts
+            print(f"🔍 Nemotron OCR engine (merge_level={merge_level})")
+        # Advanced OCR Options - customize default ocr_options if any OCR settings are provided
+        elif any(key.startswith('ocr_') for key in simple_options.keys()) or 'force_full_page_ocr' in simple_options:
             # Start with existing OCR options (which have defaults) and modify them
             ocr_options = pipeline_options.ocr_options
             

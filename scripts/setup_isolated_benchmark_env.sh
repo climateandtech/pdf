@@ -20,7 +20,13 @@ if [[ ! -x "$BENCHMARK_VENV/bin/python" ]]; then
 fi
 
 "$BENCHMARK_VENV/bin/pip" install --upgrade pip
+# Base deps from production requirements minus docling pin, then upgraded docling.
+REQ_BASE="$ROOT/requirements.txt"
+TMP_REQ="$(mktemp)"
+grep -v -E '^docling|^# Pin: 2\.96' "$REQ_BASE" >"$TMP_REQ"
+"$BENCHMARK_VENV/bin/pip" install -r "$TMP_REQ"
 "$BENCHMARK_VENV/bin/pip" install -r "$REQ"
+rm -f "$TMP_REQ"
 
 echo ""
 echo "==> Verify imports"
