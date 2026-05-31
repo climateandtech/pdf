@@ -66,7 +66,8 @@ pip install -r requirements-gliner.txt
 ./start_kg_gliner.sh
 ```
 
-GPU deploy (both workers): push to `climateandtech/pdf` `main`, then from `coolify-provisioning/` run `./gpu-deploy-worker.sh` and `./gpu-sync-nats-env.sh`.
+GPU deploy (both workers): push to `climateandtech/pdf` `main`, then from `coolify-provisioning/` run `./gpu-setup-production.sh` (once) and `./gpu-deploy-worker.sh`. See **`docs/GPU_PRODUCTION.md`** for systemd, isolated Docling upgrade, and Nemotron venvs.
+
 Platform calls `kg.infer` when `KG_EXTRACT_ON_GPU=1` (no separate platform clone on GPU).
 
 ### 3. Client Integration (Your Laptop)
