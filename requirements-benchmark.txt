@@ -1,0 +1,4 @@
+# Isolated benchmark venv — production worker stays on pdf/requirements.txt (docling<2.43).
+-r requirements.txt
+# Upgrade candidate for isolated benchmark env only (do not install on live smoldocling worker).
+docling>=2.43.0,<2.50
