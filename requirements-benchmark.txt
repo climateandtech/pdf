@@ -1,3 +1,2 @@
-# Upgraded Docling for isolated benchmark venv only (install via setup_isolated_benchmark_env.sh).
-# Do not -r requirements.txt here — production pins docling<2.43 and pip cannot resolve both.
-docling>=2.43.0
+# Optional extras for benchmark venv (production venv uses the same docling pin in requirements.txt).
+docling>=2.96.0,<2.97.0

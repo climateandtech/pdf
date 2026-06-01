@@ -552,9 +552,20 @@ class DoclingWorker:
             
             # **DYNAMIC DOCLING CONFIGURATION**
             doc_converter = self._create_document_converter(docling_options)
-            
+
+            convert_kwargs: dict = {}
+            if isinstance(docling_options, dict):
+                page_range = docling_options.get("page_range")
+                if isinstance(page_range, (list, tuple)) and len(page_range) == 2:
+                    convert_kwargs["page_range"] = (int(page_range[0]), int(page_range[1]))
+                target_pages = docling_options.get("target_pages")
+                if convert_kwargs.get("page_range") is None and isinstance(target_pages, list) and target_pages:
+                    pages = sorted(int(p) for p in target_pages)
+                    convert_kwargs["page_range"] = (pages[0], pages[-1])
+                    print(f"📄 Docling Worker: page_range={convert_kwargs['page_range']} from target_pages")
+
             # **REAL DOCLING PROCESSING**
-            result = doc_converter.convert(str(temp_file))
+            result = doc_converter.convert(str(temp_file), **convert_kwargs)
             
             # Extract content in different formats
             document = result.document

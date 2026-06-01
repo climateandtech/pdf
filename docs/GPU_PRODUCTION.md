@@ -12,7 +12,9 @@ Laptop deploy scripts live in **`coolify-provisioning/`** (sibling repo): `gpu-s
 | GLiNER infer | `smoldocling` | `kg_gliner_worker.py` | `kg.infer` (request/reply) |
 | Ollama (bge-m3) | `marc` | Ollama | HTTP `:16942` (platform embed) |
 
-Docling production venv: **`venv/`** — pinned `docling>=2.42.0,<2.43` in `requirements.txt`.
+Docling production venv: **`venv/`** — pinned `docling>=2.96.0,<2.97.0` in `requirements.txt` (pass-1 default `fast_text_tables`).
+
+Pass-1 requests from the platform always include `docling_options` from `DOCLING_PARSE_MODE` (default `fast_text_tables`). Pass-2 enrichment is queued by the platform when `FEATURE_MULTISTAGE_INDEXING=1` and the document profile flags OCR/VLM/table follow-up.
 
 ## Systemd user units (production)
 
@@ -55,9 +57,13 @@ tail -f ~/apps/pdf/worker.log
 
 Legacy **`pdf-docling-worker.service`** (from old `deploy_worker.sh`) is removed on migrate.
 
-## Isolated venvs (benchmark / enrichment — not production NATS)
+## Docling version
 
-Production **`venv/`** stays on Docling 2.42 until benchmarks pass. Upgrade candidates use separate venvs:
+Production **`venv/`** runs Docling **2.96.x** (same pin as `requirements.txt`). Benchmark scripts may reuse `venv-benchmark/` but production no longer stays on 2.42.
+
+### Isolated venvs (optional Nemotron / experiments — not production NATS)
+
+Production **`venv/`** is the NATS worker. Optional isolated venvs:
 
 | Venv | Purpose | Setup script |
 |------|---------|--------------|

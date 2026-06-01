@@ -16,7 +16,8 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from parse_modes import PARSE_MODES, get_parse_mode
+from parse_modes import MODE_DESCRIPTIONS, PARSE_MODES, describe_parse_mode, get_parse_mode
+from parser_registry import collect_environment, register_benchmark_run, sha256_file, table_stats
 from worker_runtime import bootstrap_gpu, cleanup_gpu_memory
 
 SCHEMA_VERSION = "parser-benchmark/v1"
@@ -55,6 +56,34 @@ def _page_count(document, structured: dict) -> int:
     return 0
 
 
+def _picture_description_stats(structured: dict) -> dict[str, Any]:
+    """Count figures and VLM captions in Docling structured export."""
+    pictures = structured.get("pictures") or []
+    if isinstance(pictures, dict):
+        pictures = list(pictures.values())
+    described: list[str] = []
+    for pic in pictures:
+        if not isinstance(pic, dict):
+            continue
+        text = (
+            pic.get("description")
+            or pic.get("caption")
+            or pic.get("text")
+        )
+        if not text:
+            for ann in pic.get("annotations") or []:
+                if isinstance(ann, dict) and ann.get("text"):
+                    text = ann["text"]
+                    break
+        if text and str(text).strip():
+            described.append(str(text).strip())
+    return {
+        "picture_count": len(pictures),
+        "described_picture_count": len(described),
+        "sample_descriptions": described[:3],
+    }
+
+
 def benchmark_pdf(pdf_path: Path, mode: str) -> dict[str, Any]:
     from docling_worker import DoclingWorker
 
@@ -70,14 +99,19 @@ def benchmark_pdf(pdf_path: Path, mode: str) -> dict[str, Any]:
     markdown = document.export_to_markdown()
     structured = document.export_to_dict()
     pages = _page_count(document, structured)
+    picture_stats = _picture_description_stats(structured)
+    tbl_stats = table_stats(structured)
     return {
         "mode": mode,
+        "mode_description": describe_parse_mode(mode),
         "elapsed_s": round(elapsed_s, 3),
         "page_count": pages,
         "pages_per_min": round((pages / elapsed_s) * 60, 2) if elapsed_s > 0 else 0,
         "markdown_chars": len(markdown),
         "markdown_path_hint": f"artifacts/{pdf_path.stem}_{mode}.md",
         "structured_keys": sorted(structured.keys()),
+        "picture_stats": picture_stats,
+        "table_stats": tbl_stats,
         "vram_before": vram_before,
         "vram_after": vram_after,
         "options": options,
@@ -99,7 +133,9 @@ def write_run(
         "run_id": run_id,
         "created_at": datetime.now(timezone.utc).isoformat(),
         "pdf": str(pdf_path.resolve()),
+        "pdf_sha256": sha256_file(pdf_path),
         "modes": modes,
+        "mode_descriptions": {m: describe_parse_mode(m) for m in modes},
     }
     metrics = {
         "schema_version": SCHEMA_VERSION,
@@ -115,10 +151,19 @@ def write_run(
         "",
     ]
     for row in results:
+        pics = row.get("picture_stats") or {}
+        tbl = row.get("table_stats") or {}
         summary_lines.append(
             f"- `{row['mode']}`: {row['pages_per_min']} pages/min, "
-            f"{row['markdown_chars']} chars, {row['elapsed_s']}s"
+            f"{row['markdown_chars']} chars, {row['elapsed_s']}s, "
+            f"{pics.get('described_picture_count', 0)}/{pics.get('picture_count', 0)} figures described, "
+            f"{tbl.get('pipe_ready_tables', 0)}/{tbl.get('table_count', 0)} structured tables"
         )
+        if row.get("mode_description"):
+            summary_lines.append(f"  - {row['mode_description']}")
+        samples = pics.get("sample_descriptions") or []
+        for sample in samples[:1]:
+            summary_lines.append(f"  - sample caption: {sample[:120]}{'…' if len(sample) > 120 else ''}")
     (run_dir / "summary.md").write_text("\n".join(summary_lines) + "\n", encoding="utf-8")
     return run_dir
 
@@ -128,12 +173,23 @@ def main() -> int:
     parser.add_argument("--pdf", type=Path, required=True)
     parser.add_argument(
         "--modes",
-        default="baseline,fast_text,standard",
+        default="fast_text_tables,fast_text,standard,rich",
         help="Comma-separated parse modes",
     )
-    parser.add_argument("--output-root", type=Path, default=Path("benchmarks/parser/runs"))
+    parser.add_argument(
+        "--output-root",
+        type=Path,
+        default=Path("benchmarks/parser/registry/runs"),
+    )
     parser.add_argument("--run-id", default=None)
     parser.add_argument("--gpu-profile", default=None)
+    parser.add_argument(
+        "--registry-root",
+        type=Path,
+        default=Path("benchmarks/parser/registry"),
+        help="Append flat rows to registry manifest.jsonl",
+    )
+    parser.add_argument("--no-registry", action="store_true", help="Skip manifest.jsonl append")
     args = parser.parse_args()
 
     if not args.pdf.is_file():
@@ -147,6 +203,7 @@ def main() -> int:
             return 2
 
     run_id = args.run_id or datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    environment = collect_environment(gpu_profile=args.gpu_profile)
     bootstrap_gpu(args.gpu_profile)
     results: list[dict[str, Any]] = []
     try:
@@ -164,6 +221,17 @@ def main() -> int:
         modes=modes,
         results=results,
     )
+    if not args.no_registry:
+        manifest = register_benchmark_run(
+            run_id=run_id,
+            pdf_path=args.pdf,
+            modes=modes,
+            results=results,
+            run_dir=run_dir,
+            environment=environment,
+            root=args.registry_root,
+        )
+        print(f"Appended registry manifest: {manifest}")
     print(f"Wrote parser benchmark: {run_dir}")
     return 0
 
