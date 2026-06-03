@@ -1,0 +1,20 @@
+[Unit]
+Description=PDF Docling NATS worker — test broker (smoldocling, pdf-test)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/home/smoldocling/apps/pdf-test
+EnvironmentFile=-/home/smoldocling/apps/pdf-test/.env
+Environment=DOCLING_GPU_PROFILE=20gb_nats
+ExecStart=/home/smoldocling/apps/pdf-test/venv/bin/python /home/smoldocling/apps/pdf-test/docling_worker.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/smoldocling/apps/pdf-test/worker-test.log
+StandardError=append:/home/smoldocling/apps/pdf-test/worker-test.log
+
+[Install]
+WantedBy=default.target
