@@ -64,3 +64,5 @@ tail -f ~/apps/pdf-test/worker-test.log
 ```
 
 Stop test worker only: `~/apps/pdf-test/scripts/stop_worker_test.sh`
+
+From laptop (`coolify-provisioning/`): `./gpu-workers.sh status test`, `./gpu-workers.sh restart test`, `./gpu-workers.sh logs test -f`

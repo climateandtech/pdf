@@ -72,24 +72,31 @@ class S3DocumentClient:
                 await s3.head_bucket(Bucket=self.s3_config.bucket_name)
                 logger.debug(f"Bucket {self.s3_config.bucket_name} exists")
             except ClientError as e:
-                error_code = e.response['Error']['Code']
-                if error_code == '404':
-                    # Bucket doesn't exist, create it
-                    try:
-                        if self.s3_config.region_name == 'us-east-1':
-                            # us-east-1 doesn't need LocationConstraint
-                            await s3.create_bucket(Bucket=self.s3_config.bucket_name)
-                        else:
-                            await s3.create_bucket(
-                                Bucket=self.s3_config.bucket_name,
-                                CreateBucketConfiguration={'LocationConstraint': self.s3_config.region_name}
-                            )
-                        logger.info(f"Created S3 bucket: {self.s3_config.bucket_name}")
-                    except ClientError as create_error:
-                        logger.error(f"Failed to create bucket: {create_error}")
-                        raise
-                else:
+                error_code = e.response["Error"]["Code"]
+                missing = error_code in ("404", "NoSuchBucket", "NotFound")
+                if not missing:
                     logger.error(f"Error accessing bucket: {e}")
+                    raise
+                try:
+                    if self.s3_config.region_name == "us-east-1":
+                        await s3.create_bucket(Bucket=self.s3_config.bucket_name)
+                    else:
+                        await s3.create_bucket(
+                            Bucket=self.s3_config.bucket_name,
+                            CreateBucketConfiguration={
+                                "LocationConstraint": self.s3_config.region_name
+                            },
+                        )
+                    logger.info(f"Created S3 bucket: {self.s3_config.bucket_name}")
+                except ClientError as create_error:
+                    create_code = create_error.response["Error"]["Code"]
+                    if create_code in ("BucketAlreadyExists", "BucketAlreadyOwnedByYou"):
+                        logger.info(
+                            "Bucket %s already exists (head missed it)",
+                            self.s3_config.bucket_name,
+                        )
+                        return
+                    logger.error(f"Failed to create bucket: {create_error}")
                     raise
 
     async def process_document(
