@@ -48,6 +48,17 @@ Push test-worker/systemd changes to `pdf` first, then run the above (or `gpu-dep
 
 S3 credentials copied from `ct-platform/backend/.env`.
 
+### S3 (separate test bucket)
+
+Production uploads use `uniformly-entail-expedited`. Test stack uses **`ct-storage-test`** (or your name in `.env.s3.test`):
+
+```bash
+cp .env.s3.test.example .env.s3.test
+./setup-s3-test-env.sh --create --sync-gpu
+```
+
+Never point pdf-test at the production bucket.
+
 ## Platform Docker E2E (same broker as test worker)
 
 ```bash

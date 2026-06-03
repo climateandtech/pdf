@@ -10,13 +10,23 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+
+def resolve_s3_bucket_name() -> str:
+    """S3_BUCKET (pdf worker) or S3_BUCKET_NAME (platform) — required for workers."""
+    for key in ("S3_BUCKET", "S3_BUCKET_NAME"):
+        value = os.getenv(key)
+        if value:
+            return value.strip()
+    return "documents"
+
+
 class S3Config(BaseModel):
     """S3 configuration with validation and boto3 best practices"""
     
     # S3 Connection
     endpoint_url: Optional[str] = Field(default_factory=lambda: os.getenv("S3_ENDPOINT_URL"))
     region_name: str = Field(default_factory=lambda: os.getenv("AWS_DEFAULT_REGION", "us-east-1"))
-    bucket_name: str = Field(default_factory=lambda: os.getenv("S3_BUCKET", "documents"))
+    bucket_name: str = Field(default_factory=resolve_s3_bucket_name)
     
     # Authentication (boto3 will use standard AWS credential chain)
     aws_access_key_id: Optional[str] = Field(default_factory=lambda: os.getenv("AWS_ACCESS_KEY_ID"))

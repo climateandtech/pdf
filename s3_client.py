@@ -22,6 +22,7 @@ import nats
 from nats.js.api import StreamConfig
 
 from config import NatsConfig
+from s3_bucket import ensure_bucket_exists
 from s3_config import S3Config, ProcessingConfig
 
 logger = logging.getLogger(__name__)
@@ -66,38 +67,9 @@ class S3DocumentClient:
         logger.info("S3 + NATS client initialized")
 
     async def _ensure_bucket_exists(self):
-        """Create S3 bucket if it doesn't exist using boto3 best practices"""
+        """Create S3 bucket if this account cannot access it yet."""
         async with self.s3_client() as s3:
-            try:
-                await s3.head_bucket(Bucket=self.s3_config.bucket_name)
-                logger.debug(f"Bucket {self.s3_config.bucket_name} exists")
-            except ClientError as e:
-                error_code = e.response["Error"]["Code"]
-                missing = error_code in ("404", "NoSuchBucket", "NotFound")
-                if not missing:
-                    logger.error(f"Error accessing bucket: {e}")
-                    raise
-                try:
-                    if self.s3_config.region_name == "us-east-1":
-                        await s3.create_bucket(Bucket=self.s3_config.bucket_name)
-                    else:
-                        await s3.create_bucket(
-                            Bucket=self.s3_config.bucket_name,
-                            CreateBucketConfiguration={
-                                "LocationConstraint": self.s3_config.region_name
-                            },
-                        )
-                    logger.info(f"Created S3 bucket: {self.s3_config.bucket_name}")
-                except ClientError as create_error:
-                    create_code = create_error.response["Error"]["Code"]
-                    if create_code in ("BucketAlreadyExists", "BucketAlreadyOwnedByYou"):
-                        logger.info(
-                            "Bucket %s already exists (head missed it)",
-                            self.s3_config.bucket_name,
-                        )
-                        return
-                    logger.error(f"Failed to create bucket: {create_error}")
-                    raise
+            await ensure_bucket_exists(s3, self.s3_config)
 
     async def process_document(
         self, 

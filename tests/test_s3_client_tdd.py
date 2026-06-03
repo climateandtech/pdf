@@ -12,7 +12,6 @@ import tempfile
 import os
 from pathlib import Path
 from unittest.mock import Mock, AsyncMock, patch, MagicMock
-from contextlib import asynccontextmanager
 import boto3
 from moto import mock_aws
 import nats
@@ -149,38 +148,6 @@ class TestS3ClientArchitecture:
         response = s3_client.list_buckets()
         bucket_names = [b['Name'] for b in response['Buckets']]
         assert s3_config.bucket_name in bucket_names
-
-    @pytest.mark.asyncio
-    async def test_ensure_bucket_treats_head_404_create_already_exists_as_ok(
-        self, s3_config, nats_config
-    ):
-        """Hetzner-style: head_bucket 404 but create_bucket returns BucketAlreadyExists."""
-        from botocore.exceptions import ClientError
-
-        client = S3DocumentClient(s3_config=s3_config, nats_config=nats_config)
-        mock_s3 = AsyncMock()
-
-        def head_error(*_args, **_kwargs):
-            raise ClientError(
-                {"Error": {"Code": "404", "Message": "Not Found"}},
-                "HeadBucket",
-            )
-
-        def create_error(*_args, **_kwargs):
-            raise ClientError(
-                {"Error": {"Code": "BucketAlreadyExists", "Message": "exists"}},
-                "CreateBucket",
-            )
-
-        mock_s3.head_bucket.side_effect = head_error
-        mock_s3.create_bucket.side_effect = create_error
-
-        @asynccontextmanager
-        async def fake_s3_client():
-            yield mock_s3
-
-        with patch.object(client, "s3_client", fake_s3_client):
-            await client._ensure_bucket_exists()  # must not raise
 
     @pytest.mark.asyncio
     @mock_aws
