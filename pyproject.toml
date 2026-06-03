@@ -1,0 +1,14 @@
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = [".", "tests", "scripts"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "S", "B", "BLE", "ASYNC", "RUF"]
+ignore = ["COM812", "ISC001", "S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["S101", "S105", "S106"]
+
+[tool.ruff.format]
+quote-style = "double"

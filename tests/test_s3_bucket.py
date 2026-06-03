@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from unittest.mock import AsyncMock
+
 import pytest
 from botocore.exceptions import ClientError
-from unittest.mock import AsyncMock
 
 from s3_bucket import S3BucketEnsureError, bucket_is_accessible, ensure_bucket_exists
 from s3_config import S3Config
