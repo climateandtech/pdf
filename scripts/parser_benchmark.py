@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from parse_modes import MODE_DESCRIPTIONS, PARSE_MODES, describe_parse_mode, get_parse_mode
+from parse_modes import PARSE_MODES, describe_parse_mode, get_parse_mode
 from parser_registry import collect_environment, register_benchmark_run, sha256_file, table_stats
 from worker_runtime import bootstrap_gpu, cleanup_gpu_memory
 
