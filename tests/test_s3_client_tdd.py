@@ -89,8 +89,11 @@ def processing_config():
 class TestS3ConfigValidation:
     """Test S3 configuration validation and boto3 integration"""
 
-    def test_s3_config_defaults(self):
+    def test_s3_config_defaults(self, monkeypatch):
         """Test S3 config uses environment variables and sensible defaults"""
+        monkeypatch.delenv("AWS_DEFAULT_REGION", raising=False)
+        monkeypatch.delenv("S3_BUCKET", raising=False)
+        monkeypatch.delenv("S3_BUCKET_NAME", raising=False)
         config = S3Config()
         assert config.region_name == "us-east-1"
         assert config.multipart_threshold == 100 * 1024 * 1024  # 100MB

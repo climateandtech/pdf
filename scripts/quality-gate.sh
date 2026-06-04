@@ -103,6 +103,13 @@ pdf_discover_tests() {
         PDF_AFFECTED_TESTS+=("tests/test_s3_bucket.py")
         PDF_AFFECTED_COV+=("--cov=s3_bucket")
         ;;
+      tests/test_s3_client_tdd.py)
+        # Lint only in quick gate — moto/integration; unit coverage in test_s3_bucket.py
+        ;;
+      tests/test_s3_bucket.py)
+        PDF_AFFECTED_TESTS+=("$rel")
+        PDF_AFFECTED_COV+=("--cov=s3_bucket")
+        ;;
       tests/test_*.py)
         PDF_AFFECTED_TESTS+=("$rel")
         ;;
