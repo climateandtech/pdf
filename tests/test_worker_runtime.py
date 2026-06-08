@@ -7,9 +7,10 @@ from worker_runtime import PROFILE_ALIASES, resolve_profile_name
 
 @pytest.mark.unit
 def test_resolve_profile_full():
-    assert resolve_profile_name("full") == "20gb_nats"
-    assert resolve_profile_name("a") == "20gb_nats"
-    assert resolve_profile_name("nats") == "20gb_nats"
+    assert resolve_profile_name("full") == "20gb_capped"
+    assert resolve_profile_name("a") == "20gb_capped"
+    assert resolve_profile_name("nats") == "20gb_capped"
+    assert resolve_profile_name("20gb_nats") == "20gb_nats"
 
 
 @pytest.mark.unit
@@ -21,4 +22,5 @@ def test_resolve_profile_capped():
 
 @pytest.mark.unit
 def test_profile_aliases_complete():
-    assert PROFILE_ALIASES["full"] == "20gb_nats"
+    assert PROFILE_ALIASES["full"] == "20gb_capped"
+    assert PROFILE_ALIASES["20gb_nats"] == "20gb_nats"
