@@ -23,6 +23,13 @@ FAST_TEXT: dict[str, Any] = {
 FAST_TEXT_TABLES: dict[str, Any] = {
     **FAST_TEXT,
     "do_table_structure": True,
+    "table_do_cell_matching": False,
+    "num_threads": 2,
+    "layout_batch_size": 1,
+    "ocr_batch_size": 1,
+    "table_batch_size": 1,
+    "queue_max_size": 1,
+    "generate_parsed_pages": False,
 }
 
 BASELINE: dict[str, Any] = {

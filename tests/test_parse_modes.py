@@ -35,6 +35,8 @@ def test_fast_text_tables_enables_table_structure_only():
     assert mode["force_backend_text"] is True
     assert mode["do_table_structure"] is True
     assert mode["do_ocr"] is False
+    assert mode["table_do_cell_matching"] is False
+    assert mode["layout_batch_size"] == 1
 
 
 def test_describe_parse_mode_documents_fast_text_tables():

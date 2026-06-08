@@ -147,6 +147,24 @@ class GPUMemoryOptimizer:
             gradient_checkpointing=True,
             description="Cap Docling to ~5GB VRAM (path B — small batches, OCR/table only)"
         ),
+
+        # Production shared GPU: 8GB Docling cap, batch=1, leave ~12GB for Ollama
+        "20gb_capped": MemoryConfig(
+            memory_fraction=0.40,
+            max_batch_size=1,
+            vlm_batch_size=1,
+            num_threads=2,
+            images_scale=0.5,
+            cleanup_threshold=0.70,
+            pytorch_alloc_conf={
+                'max_split_size_mb': 128,
+                'garbage_collection_threshold': 0.7,
+                'expandable_segments': True
+            },
+            enable_mixed_precision=True,
+            gradient_checkpointing=True,
+            description="Production: 8GB Docling CUDA cap, batch=1, Ollama reserve via vram_policy"
+        ),
     }
     
     @classmethod
@@ -191,36 +209,35 @@ class GPUMemoryOptimizer:
         """Generate optimal Docling options based on memory configuration"""
         
         base_options = {
-            # VLM settings optimized for memory
             'vlm_batch_size': config.vlm_batch_size,
             'images_scale': config.images_scale,
-            
-            # Performance settings
             'num_threads': config.num_threads,
-            'accelerator_device': 'gpu',
-            
-            # Memory-efficient defaults
-            'generate_picture_images': False,  # Disable to save memory
-            'generate_page_images': False,     # Disable to save memory
-            'force_full_page_ocr': False,      # Conservative OCR
-            
-            # Flash attention based on config
+            'layout_batch_size': 1,
+            'ocr_batch_size': 1,
+            'table_batch_size': 1,
+            'queue_max_size': 1,
+            'generate_picture_images': False,
+            'generate_page_images': False,
+            'force_full_page_ocr': False,
             'cuda_use_flash_attention2': not config.gradient_checkpointing,
         }
-        
-        # Merge user options
+
         if user_options:
-            # Override base options with user preferences
             base_options.update(user_options)
-            
-            # But enforce memory limits
+            if user_options.get('accelerator_device', '').lower() in ('cpu', 'cuda', 'gpu'):
+                pass
+            elif 'accelerator_device' not in user_options:
+                base_options.setdefault('accelerator_device', 'cuda')
+
             base_options['vlm_batch_size'] = min(
                 base_options.get('vlm_batch_size', config.vlm_batch_size),
-                config.max_batch_size
+                config.max_batch_size,
             )
-            
-            print(f"🔧 User options merged, VLM batch size capped at {base_options['vlm_batch_size']}")
-        
+            print(
+                f"🔧 User options merged, VLM batch size capped at "
+                f"{base_options['vlm_batch_size']}"
+            )
+
         return base_options
     
     @classmethod

@@ -35,35 +35,38 @@ class MemoryOptimizationPatch:
             print("🔄 Continuing with default settings...")
         
     def get_optimized_options(self, user_options: Optional[Dict] = None) -> Dict[str, Any]:
-        """Get memory-optimized Docling options"""
-        
-        # Use the configuration system
+        """Get memory-optimized Docling options without re-applying CUDA caps per request."""
         try:
-            optimized = setup_gpu_optimization(self.config_name, user_options)
+            config = getattr(self, "config", None)
+            if config is None:
+                config = GPUMemoryOptimizer.CONFIGS.get(self.config_name)
+            if config is None:
+                config = GPUMemoryOptimizer.CONFIGS["20gb_capped"]
+            optimized = GPUMemoryOptimizer.get_optimal_docling_options(config, user_options)
             print(f"🎯 Generated optimized options with {len(optimized)} settings")
             return optimized
         except Exception as e:
             print(f"⚠️ Failed to generate optimized options: {e}")
-            # Fallback to safe defaults
             return self._get_safe_defaults(user_options)
     
     def _get_safe_defaults(self, user_options: Optional[Dict] = None) -> Dict[str, Any]:
         """Safe fallback defaults for 24GB VRAM"""
         
         defaults = {
-            'vlm_batch_size': 2,
-            'images_scale': 1.0,
-            'num_threads': 4,
-            'accelerator_device': 'gpu',
+            'vlm_batch_size': 1,
+            'images_scale': 0.5,
+            'num_threads': 2,
+            'layout_batch_size': 1,
+            'ocr_batch_size': 1,
+            'table_batch_size': 1,
+            'queue_max_size': 1,
             'generate_picture_images': False,
             'generate_page_images': False,
         }
-        
+
         if user_options:
             defaults.update(user_options)
-            # Enforce memory limits
-            defaults['vlm_batch_size'] = min(defaults.get('vlm_batch_size', 2), 4)
-        
+
         return defaults
     
     def cleanup_memory(self, force: bool = False):

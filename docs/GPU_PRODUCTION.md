@@ -125,7 +125,28 @@ cd coolify-provisioning
 ./gpu-sync-loki-env.sh --restart   # optional Loki push
 ```
 
-Key vars: `NATS_URL`, `NATS_TOKEN`, `DOCLING_GPU_PROFILE` (production unit sets `full` → `20gb_nats` profile).
+Key vars: `NATS_URL`, `NATS_TOKEN`, `DOCLING_GPU_PROFILE` (production unit sets `20gb_capped`).
+
+### Shared GPU memory (Docling + Ollama)
+
+Static budget — no runtime probing required for ops, but worker applies an Ollama reserve gate before CUDA:
+
+| Var | Default | Purpose |
+|-----|---------|---------|
+| `DOCLING_GPU_CAP_GB` | `8` | PyTorch hard cap for Docling CUDA |
+| `DOCLING_OLLAMA_RESERVE_GB` | `12` | Minimum VRAM left for Ollama on 20GB card |
+| `DOCLING_CPU_NUM_THREADS` | `8` | CPU fallback / reserve path |
+| `OMP_NUM_THREADS` | `8` | Host threads when on CPU |
+| `DOCLING_ACCELERATOR_PREFERENCE` | `auto` | `auto` \| `cpu` \| `cuda` |
+
+Behavior:
+
+1. Try CUDA only when `used + cold_load` fits within Ollama reserve.
+2. `ThreadedPdfPipelineOptions` batch sizes default to **1** (layout/OCR/table/queue).
+3. Converter cache per device — no per-job GPU cleanup on success.
+4. On CUDA OOM/cuDNN → one CPU retry (`device_reason=oom_retry`).
+
+Emergency: `DOCLING_ACCELERATOR_PREFERENCE=cpu` (Docling never touches GPU).
 
 ## Troubleshooting
 
@@ -136,6 +157,7 @@ Key vars: `NATS_URL`, `NATS_TOKEN`, `DOCLING_GPU_PROFILE` (production unit sets 
 | Duplicate workers | `./scripts/setup_production_services.sh` stops nohup PIDs before systemd start |
 | `nats: maximum payload exceeded` | Ensure `main` includes S3 spill for large results (`result_publish.py`) |
 | Ollama bge-m3 NaN | `OLLAMA_FLASH_ATTENTION=false` on marc Ollama (`coolify-provisioning/gpu-fix-ollama-bge-m3-nan.sh`) |
+| cuDNN / GPU OOM during parse | Worker retries once on CPU (`oom_retry`); check `device_reason` in `docs.result`; tune `DOCLING_GPU_CAP_GB` / Ollama model size |
 | GPU git pull blocked by local edits | `gpu-deploy-worker.sh --reset` from laptop or stash on GPU |
 
 ## SSH access

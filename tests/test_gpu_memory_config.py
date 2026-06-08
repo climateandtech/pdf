@@ -9,6 +9,7 @@ from gpu_memory_config import GPUMemoryOptimizer, MemoryConfig, setup_gpu_optimi
 class TestGPUMemoryConfigs:
     def test_production_presets_exist(self):
         assert "20gb_nats" in GPUMemoryOptimizer.CONFIGS
+        assert "20gb_capped" in GPUMemoryOptimizer.CONFIGS
         assert "capped_5gb" in GPUMemoryOptimizer.CONFIGS
 
     def test_20gb_nats_leaves_headroom_for_ollama(self):
@@ -32,8 +33,16 @@ class TestGPUMemoryConfigs:
             cfg, user_options={"vlm_batch_size": 99}
         )
         assert opts["vlm_batch_size"] == 1
-        assert opts["accelerator_device"] == "gpu"
+        assert opts["layout_batch_size"] == 1
         assert opts["generate_picture_images"] is False
+
+    def test_get_optimal_docling_options_preserves_cpu_device(self):
+        cfg = GPUMemoryOptimizer.CONFIGS["20gb_capped"]
+        opts = GPUMemoryOptimizer.get_optimal_docling_options(
+            cfg, user_options={"accelerator_device": "cpu", "num_threads": 8}
+        )
+        assert opts["accelerator_device"] == "cpu"
+        assert opts["num_threads"] == 8
 
     def test_detect_optimal_config_without_cuda(self, monkeypatch):
         monkeypatch.setattr(

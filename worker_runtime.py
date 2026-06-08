@@ -5,12 +5,13 @@ from __future__ import annotations
 import os
 from typing import Optional
 
-# full / nats  → production NATS path (use GPU, leave headroom for Ollama on shared host)
-# capped_5gb / b / 5gb → benchmark path B (~5GB VRAM cap via torch.cuda.set_per_process_memory_fraction)
+# full / nats  → production capped path (8GB Docling + CPU fallback via vram_policy)
+# capped_5gb / b / 5gb → benchmark (~5GB VRAM cap via set_per_process_memory_fraction)
 PROFILE_ALIASES = {
-    "full": "20gb_nats",
-    "a": "20gb_nats",
-    "nats": "20gb_nats",
+    "full": "20gb_capped",
+    "a": "20gb_capped",
+    "nats": "20gb_capped",
+    "20gb_nats": "20gb_nats",
     "capped_5gb": "capped_5gb",
     "b": "capped_5gb",
     "5gb": "capped_5gb",
@@ -36,8 +37,9 @@ def bootstrap_gpu(profile: Optional[str] = None) -> str:
     config_name = resolve_profile_name(profile)
     from gpu_memory_config import GPUMemoryOptimizer
 
-    if config_name == "capped_5gb":
-        cap_gb = float(os.getenv("DOCLING_GPU_CAP_GB", "5"))
+    if config_name in ("capped_5gb", "20gb_capped"):
+        default_cap = "5" if config_name == "capped_5gb" else "8"
+        cap_gb = float(os.getenv("DOCLING_GPU_CAP_GB", default_cap))
         if torch.cuda.is_available():
             total_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
             fraction = min(0.95, cap_gb / total_gb)

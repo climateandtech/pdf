@@ -20,6 +20,12 @@ from s3_config import S3Config
 from config import NatsConfig
 from worker_runtime import bootstrap_gpu, cleanup_gpu_memory
 from result_publish import publish_docling_result
+from vram_policy import (
+    cpu_fallback_options,
+    is_cuda_gpu_failure,
+    resolve_accelerator_device,
+    stable_options_hash,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -32,7 +38,7 @@ class DoclingWorker:
         self.nats_config = NatsConfig()
         self.client = S3DocumentClient(self.s3_config, self.nats_config)
 
-        # DocumentConverter is created per request (after bootstrap_gpu loads torch/docling)
+        self._converter_cache: dict[tuple[str, str], object] = {}
         print("🤖 Docling Worker: Dynamic VLM configuration enabled")
         print("📋 VLM options will be specified by the publisher for each request")
         
@@ -42,17 +48,18 @@ class DoclingWorker:
         print(f"✅ Docling Worker connected to NATS: {self.nats_config.url}")
         print(f"✅ Docling Worker connected to S3: {self.s3_config.bucket_name}")
         
-    def _create_document_converter(self, docling_options=None):
-        """Create a DocumentConverter with configuration options
-        
-        Args:
-            docling_options (dict): Can be either:
-                - Simple JSON VLM options: {"vlm_model": "granite", "do_picture_description": true}
-                - Complete Docling objects: {"format_options": {...}}
-                
-        Returns:
-            DocumentConverter: Configured converter instance
-        """
+    def _evict_converter_cache(self, device: str | None = None) -> None:
+        """Drop cached converters (all or for one accelerator device)."""
+        if device is None:
+            self._converter_cache.clear()
+            return
+        device_key = device.lower()
+        for key in list(self._converter_cache):
+            if key[1] == device_key:
+                del self._converter_cache[key]
+
+    def _build_document_converter(self, docling_options=None):
+        """Build DocumentConverter from resolved docling_options (no VRAM gate)."""
         if not docling_options:
             print("📋 Using standard DocumentConverter (no custom options)")
             from docling.document_converter import DocumentConverter
@@ -60,33 +67,92 @@ class DoclingWorker:
             return DocumentConverter()
 
         try:
-            from memory_patch import get_memory_optimized_options
-
             print(f"🎛️  Configuring DocumentConverter with options: {list(docling_options.keys())}")
-            docling_options = get_memory_optimized_options(docling_options)
-            
-            # Check if we have simple JSON options (sent over NATS)
             if self._is_simple_options(docling_options):
                 print("🔄 Converting simple options to Docling objects...")
                 docling_config = self._convert_simple_options(docling_options)
             else:
                 print("📋 Using provided Docling configuration objects...")
                 docling_config = docling_options
-            
-            # Create DocumentConverter with converted options
+
             from docling.document_converter import DocumentConverter
 
             converter = DocumentConverter(**docling_config)
-            
             print("✅ DocumentConverter configured successfully")
             return converter
-            
         except Exception as e:
             print(f"⚠️  DocumentConverter configuration failed: {e}")
             print("🔄 Falling back to standard converter")
             from docling.document_converter import DocumentConverter
 
             return DocumentConverter()
+
+    def _create_document_converter(self, docling_options=None):
+        """Create DocumentConverter with VRAM policy + memory presets applied."""
+        from memory_patch import get_memory_optimized_options
+
+        resolved = resolve_accelerator_device(
+            docling_options if isinstance(docling_options, dict) else {}
+        )
+        optimized = get_memory_optimized_options(resolved)
+        reason = optimized.get("device_reason", "unknown")
+        device = optimized.get("accelerator_device", "cuda")
+        print(f"🧭 device={device} reason={reason}")
+        return self._build_document_converter(optimized)
+
+    def _get_document_converter(self, docling_options=None):
+        """Resolve options and return a cached converter plus effective options."""
+        from memory_patch import get_memory_optimized_options
+
+        resolved = resolve_accelerator_device(
+            docling_options if isinstance(docling_options, dict) else {}
+        )
+        optimized = get_memory_optimized_options(resolved)
+        device = str(optimized.get("accelerator_device", "cuda")).lower()
+        cache_key = (stable_options_hash(optimized), device)
+        if cache_key in self._converter_cache:
+            optimized["converter_cache_hit"] = True
+            print(f"♻️  Converter cache hit device={device}")
+            return self._converter_cache[cache_key], optimized
+
+        converter = self._build_document_converter(optimized)
+        self._converter_cache[cache_key] = converter
+        optimized["converter_cache_hit"] = False
+        reason = optimized.get("device_reason", "unknown")
+        print(f"🧭 device={device} reason={reason}")
+        return converter, optimized
+
+    def _build_convert_kwargs(self, docling_options: dict | None) -> dict:
+        """Build kwargs for DocumentConverter.convert from docling_options."""
+        convert_kwargs: dict = {}
+        if not isinstance(docling_options, dict):
+            return convert_kwargs
+        page_range = docling_options.get("page_range")
+        if isinstance(page_range, (list, tuple)) and len(page_range) == 2:
+            convert_kwargs["page_range"] = (int(page_range[0]), int(page_range[1]))
+        target_pages = docling_options.get("target_pages")
+        if convert_kwargs.get("page_range") is None and isinstance(target_pages, list) and target_pages:
+            pages = sorted(int(p) for p in target_pages)
+            convert_kwargs["page_range"] = (pages[0], pages[-1])
+            print(f"📄 Docling Worker: page_range={convert_kwargs['page_range']} from target_pages")
+        return convert_kwargs
+
+    def _convert_with_device_fallback(self, pdf_path: str, docling_options, convert_kwargs: dict):
+        """Run convert on CUDA when allowed; one CPU retry after CUDA OOM/cuDNN."""
+        converter, opts = self._get_document_converter(docling_options)
+        device = str(opts.get("accelerator_device", "cuda")).lower()
+        try:
+            return converter.convert(pdf_path, **convert_kwargs), opts
+        except Exception as exc:
+            if device in ("cpu",) or not is_cuda_gpu_failure(exc):
+                raise
+            print(f"⚠️  CUDA failure ({exc}); single CPU retry")
+            cleanup_gpu_memory(force=True)
+            self._evict_converter_cache("cuda")
+            self._evict_converter_cache("gpu")
+            cpu_opts = cpu_fallback_options(opts)
+            cpu_converter, cpu_opts = self._get_document_converter(cpu_opts)
+            return cpu_converter.convert(pdf_path, **convert_kwargs), cpu_opts
     
     def _is_simple_options(self, options):
         """Check if options are simple JSON options (vs complex Docling objects)"""
@@ -120,8 +186,9 @@ class DoclingWorker:
             'allow_external_plugins', 'artifacts_path', 'force_backend_text',
             'generate_parsed_pages',
             
-            # === PERFORMANCE OPTIONS (REAL) ===
+            # === PERFORMANCE / THREADED PIPELINE (REAL) ===
             'accelerator_device', 'num_threads', 'cuda_use_flash_attention2',
+            'layout_batch_size', 'ocr_batch_size', 'table_batch_size', 'queue_max_size',
             
             # === INPUT FORMAT SUPPORT ===
             'input_formats'
@@ -138,16 +205,20 @@ class DoclingWorker:
         from docling.document_converter import PdfFormatOption
         from docling.datamodel.base_models import InputFormat
         from docling.datamodel.pipeline_options import (
-            PdfPipelineOptions, 
+            PdfPipelineOptions,
             AcceleratorOptions,
             AcceleratorDevice,
             OcrEngine,
-            granite_picture_description, 
-            smolvlm_picture_description
+            granite_picture_description,
+            smolvlm_picture_description,
         )
-        
-        # Start with basic pipeline options
-        pipeline_options = PdfPipelineOptions()
+
+        try:
+            from docling.datamodel.pipeline_options import ThreadedPdfPipelineOptions
+
+            pipeline_options = ThreadedPdfPipelineOptions()
+        except ImportError:
+            pipeline_options = PdfPipelineOptions()
         
         # ======================
         # CORE PIPELINE OPTIONS (REAL Docling fields)
@@ -365,7 +436,17 @@ class DoclingWorker:
                     print("⚠️  TableFormerMode not available")
             
             pipeline_options.table_structure_options = table_options
-        
+
+        for batch_key in (
+            "layout_batch_size",
+            "ocr_batch_size",
+            "table_batch_size",
+            "queue_max_size",
+        ):
+            if batch_key in simple_options and hasattr(pipeline_options, batch_key):
+                setattr(pipeline_options, batch_key, int(simple_options[batch_key]))
+                print(f"📦 {batch_key}: {getattr(pipeline_options, batch_key)}")
+
         # ======================
         # IMAGE GENERATION
         # ======================
@@ -522,6 +603,35 @@ class DoclingWorker:
         
         return converter_options
 
+    def _build_processing_metadata(self, request: dict, docling_options: dict | None) -> dict:
+        """Echo parse config on docs.result so platform can detect stale runs later."""
+        import os
+
+        from parser_registry import collect_environment
+
+        options = docling_options if isinstance(docling_options, dict) else {}
+        environment = collect_environment(gpu_profile=os.getenv("DOCLING_GPU_PROFILE"))
+        environment["device"] = options.get("accelerator_device")
+        environment["device_reason"] = options.get("device_reason")
+        environment["oom_retried"] = options.get("oom_retried", False)
+        environment["converter_cache_hit"] = options.get("converter_cache_hit")
+        environment["vram_used_gb"] = options.get("vram_used_gb")
+        environment["vram_free_gb"] = options.get("vram_free_gb")
+        parse_mode = request.get("parse_mode")
+        return {
+            "pages": None,
+            "format": "pdf",
+            "processed_by": "docling_worker",
+            "parse_mode": parse_mode,
+            "docling_options": options,
+            "environment": environment,
+            "parse_config": {
+                "parse_mode": parse_mode,
+                "docling_options": options,
+                "environment": environment,
+            },
+        }
+
     async def process_document_request(self, message):
         """Process a document processing request from NATS"""
         request_id = "unknown"
@@ -549,23 +659,14 @@ class DoclingWorker:
                 f.write(file_content)
 
             print(f"🔬 Docling Worker: Processing PDF with docling...")
-            
-            # **DYNAMIC DOCLING CONFIGURATION**
-            doc_converter = self._create_document_converter(docling_options)
 
-            convert_kwargs: dict = {}
-            if isinstance(docling_options, dict):
-                page_range = docling_options.get("page_range")
-                if isinstance(page_range, (list, tuple)) and len(page_range) == 2:
-                    convert_kwargs["page_range"] = (int(page_range[0]), int(page_range[1]))
-                target_pages = docling_options.get("target_pages")
-                if convert_kwargs.get("page_range") is None and isinstance(target_pages, list) and target_pages:
-                    pages = sorted(int(p) for p in target_pages)
-                    convert_kwargs["page_range"] = (pages[0], pages[-1])
-                    print(f"📄 Docling Worker: page_range={convert_kwargs['page_range']} from target_pages")
-
-            # **REAL DOCLING PROCESSING**
-            result = doc_converter.convert(str(temp_file), **convert_kwargs)
+            convert_kwargs = self._build_convert_kwargs(docling_options)
+            result, docling_options = await asyncio.to_thread(
+                self._convert_with_device_fallback,
+                str(temp_file),
+                docling_options,
+                convert_kwargs,
+            )
             
             # Extract content in different formats
             document = result.document
@@ -632,19 +733,21 @@ class DoclingWorker:
                 structured_data = None
                 
             # Create response
+            processing_metadata = self._build_processing_metadata(request, docling_options)
+            processing_metadata["pages"] = (
+                len(document.pages) if hasattr(document, "pages") else 1
+            )
             response = {
                 "request_id": request_id,
                 "status": "success",
                 "backend_resource_id": backend_resource_id,
+                "parse_mode": request.get("parse_mode"),
+                "docling_options": docling_options or {},
                 "result": {
                     "text": markdown_content,
                     "markdown": markdown_content,
                     "structured_data": structured_data,
-                    "metadata": {
-                        "pages": len(document.pages) if hasattr(document, 'pages') else 1,
-                        "format": "pdf",
-                        "processed_by": "docling_worker"
-                    }
+                    "metadata": processing_metadata,
                 }
             }
             
@@ -678,7 +781,6 @@ class DoclingWorker:
         finally:
             if temp_file is not None and temp_file.exists():
                 temp_file.unlink(missing_ok=True)
-            cleanup_gpu_memory(force=False)
 
     async def start_listening(self):
         """Start listening for processing requests"""
