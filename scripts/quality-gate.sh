@@ -31,12 +31,15 @@ REPO_ROOT="$(cd "$ROOT/.." && pwd)"
 source "$ROOT/scripts/lib/git-changed.sh"
 # shellcheck source=lib/resolve-tools.sh
 source "$ROOT/scripts/lib/resolve-tools.sh"
+# shellcheck source=lib/coverage-regression.sh
+source "$ROOT/scripts/lib/coverage-regression.sh"
 qg_setup_path "$ROOT" "$REPO_ROOT"
 
 FAILED=0
 log() { echo "$@" >&2; }
 PDF_AFFECTED_TESTS=()
 PDF_AFFECTED_COV=()
+PDF_AFFECTED_APP_FILES=()
 
 CHANGED=()
 if [[ -n "$PATHS_FILE" ]]; then
@@ -83,6 +86,7 @@ fi
 pdf_discover_tests() {
   PDF_AFFECTED_TESTS=()
   PDF_AFFECTED_COV=()
+  PDF_AFFECTED_APP_FILES=()
   local rel base
   for p in "${@}"; do
     rel="${p#pdf/}"
@@ -90,18 +94,22 @@ pdf_discover_tests() {
       parse_modes.py)
         PDF_AFFECTED_TESTS+=("tests/test_parse_modes.py")
         PDF_AFFECTED_COV+=("--cov=parse_modes")
+        PDF_AFFECTED_APP_FILES+=("parse_modes.py")
         ;;
       parser_registry.py)
         PDF_AFFECTED_TESTS+=("tests/test_parser_registry.py")
         PDF_AFFECTED_COV+=("--cov=parser_registry")
+        PDF_AFFECTED_APP_FILES+=("parser_registry.py")
         ;;
       scripts/parser_benchmark.py)
         PDF_AFFECTED_TESTS+=("tests/test_parser_benchmark_contract.py")
         PDF_AFFECTED_COV+=("--cov=parser_registry")
+        PDF_AFFECTED_APP_FILES+=("parser_registry.py")
         ;;
       s3_bucket.py|s3_client.py|s3_config.py)
         PDF_AFFECTED_TESTS+=("tests/test_s3_bucket.py")
         PDF_AFFECTED_COV+=("--cov=s3_bucket")
+        PDF_AFFECTED_APP_FILES+=("s3_bucket.py")
         ;;
       tests/test_s3_client_tdd.py)
         # Lint only in quick gate — moto/integration; unit coverage in test_s3_bucket.py
@@ -135,10 +143,19 @@ if [[ "$SKIP_PYTEST" -eq 0 && ${#CHANGED[@]} -gt 0 ]]; then
       unique_cov=($(printf '%s\n' "${PDF_AFFECTED_COV[@]}" | sort -u))
     fi
     cov_args=()
+    cov_dir="$ROOT/.qg-coverage"
     if "$py" -c "import pytest_cov" >/dev/null 2>&1 && [[ ${#unique_cov[@]} -gt 0 ]]; then
-      cov_args=(--cov-report=term-missing:skip-covered "${unique_cov[@]}")
+      mkdir -p "$cov_dir"
+      cov_args=(
+        --cov-report=term-missing:skip-covered
+        --cov-report=xml:"$cov_dir/coverage.xml"
+        --cov-report=json:"$cov_dir/coverage.json"
+        "${unique_cov[@]}"
+      )
     fi
     log "quality-gate: tests: ${unique_tests[*]}"
+    out="$(mktemp)"
+    set +e
     (
       cd "$ROOT"
       pytest_args=(-q --tb=short -ra -m "not integration and not e2e")
@@ -147,7 +164,28 @@ if [[ "$SKIP_PYTEST" -eq 0 && ${#CHANGED[@]} -gt 0 ]]; then
       else
         "$py" -m pytest "${pytest_args[@]}" "${unique_tests[@]}"
       fi
-    ) || FAILED=1
+    ) 2>&1 | tee "$out"
+    rc="${PIPESTATUS[0]}"
+    set -e
+    if [[ "$rc" -ne 0 ]]; then
+      FAILED=1
+    elif [[ ${#PDF_AFFECTED_APP_FILES[@]} -gt 0 && ${#cov_args[@]} -gt 0 ]]; then
+      unique_apps=()
+      # shellcheck disable=SC2206
+      unique_apps=($(printf '%s\n' "${PDF_AFFECTED_APP_FILES[@]}" | sort -u))
+      regress_out="$(mktemp)"
+      set +e
+      qg_run_coverage_regression "$ROOT" "$py" "${unique_apps[@]}" >"$regress_out" 2>&1
+      cov_rc=$?
+      set -e
+      if [[ "$cov_rc" -ne 0 ]]; then
+        log "=== COVERAGE REGRESSION ==="
+        cat "$regress_out" >&2
+        FAILED=1
+      fi
+      rm -f "$regress_out"
+    fi
+    rm -f "$out"
   fi
 fi
 
