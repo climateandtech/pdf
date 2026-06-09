@@ -2,7 +2,8 @@
 
 Production PDF workers run as **`smoldocling`** at `/home/smoldocling/apps/pdf`. Ollama embeddings run under **`marc`** on the same host.
 
-Laptop deploy scripts live in **`coolify-provisioning/`** (sibling repo): `gpu-setup-production.sh`, `gpu-deploy-worker.sh`, `gpu-sync-nats-env.sh`.
+Laptop deploy: **`./scripts/laptop_deploy_prod.sh`** in this repo (see [LAPTOP_OPS.md](LAPTOP_OPS.md)).  
+Legacy wrappers in `coolify-provisioning/`: `gpu-deploy-worker.sh`, `gpu-sync-nats-env.sh`.
 
 ## Architecture
 
@@ -46,9 +47,9 @@ This enables linger, git-pulls this repo on GPU, installs units, stops legacy no
 ### Routine deploy (from laptop)
 
 ```bash
-cd coolify-provisioning
-./gpu-sync-nats-env.sh          # when NATS URL/token change
-./gpu-deploy-worker.sh            # git pull + pip + restart via systemd
+cd pdf
+git push origin main
+./scripts/laptop_deploy_prod.sh   # git pull on GPU + pip + restart parse/chunk/kg
 ```
 
 ### On GPU (smoldocling)

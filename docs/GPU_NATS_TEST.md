@@ -19,7 +19,7 @@ Laptop and Docker E2E use `.env.nats.test` (port **4223**, Mac-reachable).
 GPU `pdf-test` tracks **remote branches** — no rsync, no agent commits on `pdf`.
 
 1. You commit and push `climateandtech/pdf` (any branch).
-2. From laptop: `./gpu-deploy-pdf-test.sh --branch <that-branch>`.
+2. From laptop (in pdf repo): `./scripts/laptop_deploy_test.sh --branch <that-branch>`.
 
 Prod (`~/apps/pdf`, `:4222`) and test (`~/apps/pdf-test`, `:4223`) stay independent.
 
@@ -39,9 +39,10 @@ Push test-worker/systemd changes to `pdf` first, then run the above (or `gpu-dep
 ## Deploy any branch (after push)
 
 ```bash
-# in pdf repo: git push origin feat/my-parse-mode
-./gpu-deploy-pdf-test.sh --branch feat/my-parse-mode
-./gpu-deploy-pdf-test.sh --branch feat/my-parse-mode --reset   # discard GPU local edits
+git push origin feat/my-parse-mode
+./scripts/laptop_deploy_test.sh --branch feat/my-parse-mode
+./scripts/laptop_deploy_test.sh --branch feat/my-parse-mode --reset
+./scripts/laptop_test_nats_e2e.sh
 ```
 
 ## Sync NATS + S3 env only
