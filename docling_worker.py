@@ -19,6 +19,8 @@ from s3_client import S3DocumentClient
 from s3_config import S3Config
 from config import NatsConfig
 from worker_runtime import bootstrap_gpu, cleanup_gpu_memory
+from chunk_job import build_chunk_job, needs_hierarchical_chunk, publish_chunk_job
+from parse_artifact_storage import store_parse_artifacts
 from result_publish import publish_docling_result
 from vram_policy import (
     cpu_fallback_options,
@@ -737,25 +739,48 @@ class DoclingWorker:
             processing_metadata["pages"] = (
                 len(document.pages) if hasattr(document, "pages") else 1
             )
-            response = {
-                "request_id": request_id,
-                "status": "success",
-                "backend_resource_id": backend_resource_id,
-                "parse_mode": request.get("parse_mode"),
-                "docling_options": docling_options or {},
-                "result": {
-                    "text": markdown_content,
-                    "markdown": markdown_content,
-                    "structured_data": structured_data,
-                    "metadata": processing_metadata,
-                }
-            }
-            
-            print(f"✅ Docling Worker: Processing complete! Extracted {len(markdown_content)} characters")
+            print(
+                f"✅ Docling Worker: Parse complete! Extracted {len(markdown_content)} characters"
+            )
 
-            subject = f"{self.nats_config.subject_prefix}.result.{request_id}"
-            mode = await publish_docling_result(self.client, subject, response)
-            print(f"📤 Docling Worker: Sent response for {request_id} ({mode})")
+            if needs_hierarchical_chunk(docling_options):
+                artifacts = await store_parse_artifacts(
+                    self.client,
+                    request_id,
+                    structured_data=structured_data or {},
+                    markdown=markdown_content,
+                )
+                chunk_job = build_chunk_job(
+                    request_id=request_id,
+                    backend_resource_id=backend_resource_id,
+                    parse_mode=request.get("parse_mode"),
+                    docling_options=docling_options,
+                    processing_metadata=processing_metadata,
+                    artifacts=artifacts,
+                )
+                await publish_chunk_job(
+                    self.client,
+                    self.nats_config.subject_prefix,
+                    chunk_job,
+                )
+                print(f"📤 Docling Worker: Queued docs.chunk for {request_id}")
+            else:
+                response = {
+                    "request_id": request_id,
+                    "status": "success",
+                    "backend_resource_id": backend_resource_id,
+                    "parse_mode": request.get("parse_mode"),
+                    "docling_options": docling_options or {},
+                    "result": {
+                        "text": markdown_content,
+                        "markdown": markdown_content,
+                        "structured_data": structured_data,
+                        "metadata": processing_metadata,
+                    },
+                }
+                subject = f"{self.nats_config.subject_prefix}.result.{request_id}"
+                mode = await publish_docling_result(self.client, subject, response)
+                print(f"📤 Docling Worker: Sent docs.result for {request_id} ({mode})")
             
             # Acknowledge the message
             await message.ack()

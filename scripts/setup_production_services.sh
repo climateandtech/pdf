@@ -23,6 +23,7 @@ echo "==> Stop legacy nohup workers"
 ./stop_worker.sh 2>/dev/null || true
 ./stop_kg_gliner.sh 2>/dev/null || true
 pkill -f '[p]ython docling_worker.py' 2>/dev/null || true
+pkill -f '[p]ython docling_chunk_worker.py' 2>/dev/null || true
 pkill -f '[p]ython /home/smoldocling/apps/pdf/kg_gliner_worker.py' 2>/dev/null || true
 pkill -f '[p]ython kg_gliner_worker.py' 2>/dev/null || true
 rm -f worker.pid kg_gliner.pid
@@ -30,10 +31,13 @@ rm -f worker.pid kg_gliner.pid
 echo ""
 echo "==> Start systemd services"
 systemctl --user restart smoldocling-docling-worker.service
+systemctl --user restart smoldocling-docling-chunk-worker.service
 systemctl --user restart smoldocling-kg-gliner-worker.service
 sleep 3
 
 systemctl --user --no-pager status smoldocling-docling-worker.service || true
+echo ""
+systemctl --user --no-pager status smoldocling-docling-chunk-worker.service || true
 echo ""
 systemctl --user --no-pager status smoldocling-kg-gliner-worker.service || true
 

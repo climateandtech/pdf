@@ -17,6 +17,7 @@ install_unit() {
 }
 
 install_unit "$PWD/infrastructure/systemd/smoldocling-docling-worker.service"
+install_unit "$PWD/infrastructure/systemd/smoldocling-docling-chunk-worker.service"
 install_unit "$PWD/infrastructure/systemd/smoldocling-kg-gliner-worker.service"
 
 # Retire legacy unit name from deploy_worker.sh if present.
@@ -28,8 +29,8 @@ fi
 
 systemctl --user daemon-reload
 echo ""
-echo "Installed smoldocling-docling-worker + smoldocling-kg-gliner-worker"
-echo "  systemctl --user start smoldocling-docling-worker smoldocling-kg-gliner-worker"
-echo "  systemctl --user status smoldocling-docling-worker smoldocling-kg-gliner-worker"
+echo "Installed smoldocling-docling-worker + docling-chunk-worker + kg-gliner-worker"
+echo "  systemctl --user start smoldocling-docling-worker smoldocling-docling-chunk-worker smoldocling-kg-gliner-worker"
+echo "  systemctl --user status smoldocling-docling-worker smoldocling-docling-chunk-worker smoldocling-kg-gliner-worker"
 echo ""
 echo "For reboot persistence (run once as root): loginctl enable-linger $(whoami)"

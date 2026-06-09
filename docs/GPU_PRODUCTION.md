@@ -8,9 +8,15 @@ Laptop deploy scripts live in **`coolify-provisioning/`** (sibling repo): `gpu-s
 
 | Component | User | Process | NATS |
 |-----------|------|---------|------|
-| Docling worker | `smoldocling` | `docling_worker.py` | `docs.process.*` → `docs.result` |
+| Docling parse worker | `smoldocling` | `docling_worker.py` | `docs.process.*` → `docs.chunk.*` or `docs.result.*` |
+| Docling chunk worker | `smoldocling` | `docling_chunk_worker.py` | `docs.chunk.*` → `docs.result.*` (CPU, HybridChunker) |
 | GLiNER infer | `smoldocling` | `kg_gliner_worker.py` | `kg.infer` (request/reply) |
 | Ollama (bge-m3) | `marc` | Ollama | HTTP `:16942` (platform embed) |
+
+When `hierarchical_chunk=true`, the parse worker uploads `parsed/{request_id}/docling.json` and
+`markdown.md` to S3, then publishes `docs.chunk.{request_id}`. The chunk worker runs
+HybridChunker tiers and publishes `docs.result.{request_id}`. Scale chunk throughput by
+running additional `docling_chunk_worker` processes (same durable `docling_chunk_worker`).
 
 Docling production venv: **`venv/`** — pinned `docling>=2.96.0,<2.97.0` in `requirements.txt` (pass-1 default `fast_text_tables`).
 
@@ -23,6 +29,7 @@ Both workers use **user systemd** with `Restart=always`. Linger must be enabled 
 | Unit | Log file |
 |------|----------|
 | `smoldocling-docling-worker.service` | `worker.log` |
+| `smoldocling-docling-chunk-worker.service` | `chunk-worker.log` |
 | `smoldocling-kg-gliner-worker.service` | `kg_gliner.log` |
 
 Unit files: `infrastructure/systemd/`. Install with `scripts/install_systemd_services.sh` or one-shot `scripts/setup_production_services.sh`.
@@ -135,6 +142,7 @@ Static budget — no runtime probing required for ops, but worker applies an Oll
 |-----|---------|---------|
 | `DOCLING_GPU_CAP_GB` | `8` | PyTorch hard cap for Docling CUDA |
 | `DOCLING_OLLAMA_RESERVE_GB` | `12` | Minimum VRAM left for Ollama on 20GB card |
+| `DOCLING_VRAM_COLD_CUDA_GB` | `2.5` | Planned Docling CUDA spike (measured ~1.1–1.5 GiB on Opus `fast_text_tables`) |
 | `DOCLING_CPU_NUM_THREADS` | `8` | CPU fallback / reserve path |
 | `OMP_NUM_THREADS` | `8` | Host threads when on CPU |
 | `DOCLING_ACCELERATOR_PREFERENCE` | `auto` | `auto` \| `cpu` \| `cuda` |
@@ -158,6 +166,7 @@ Emergency: `DOCLING_ACCELERATOR_PREFERENCE=cpu` (Docling never touches GPU).
 | `nats: maximum payload exceeded` | Ensure `main` includes S3 spill for large results (`result_publish.py`) |
 | Ollama bge-m3 NaN | `OLLAMA_FLASH_ATTENTION=false` on marc Ollama (`coolify-provisioning/gpu-fix-ollama-bge-m3-nan.sh`) |
 | cuDNN / GPU OOM during parse | Worker retries once on CPU (`oom_retry`); check `device_reason` in `docs.result`; tune `DOCLING_GPU_CAP_GB` / Ollama model size |
+| `CUDNN_STATUS_NOT_INITIALIZED` on conv2d | Mixed `nvidia-*-cu13` wheels in venv — reinstall with `pip install -c constraints-cu12.txt -r requirements.txt`; run `python scripts/cudnn_probe.py` |
 | GPU git pull blocked by local edits | `gpu-deploy-worker.sh --reset` from laptop or stash on GPU |
 
 ## SSH access

@@ -1,0 +1,20 @@
+[Unit]
+Description=PDF Docling chunk NATS worker (CPU, smoldocling)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/home/smoldocling/apps/pdf
+EnvironmentFile=-/home/smoldocling/apps/pdf/.env
+Environment=OMP_NUM_THREADS=4
+ExecStart=/home/smoldocling/apps/pdf/venv/bin/python /home/smoldocling/apps/pdf/docling_chunk_worker.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/smoldocling/apps/pdf/chunk-worker.log
+StandardError=append:/home/smoldocling/apps/pdf/chunk-worker.log
+
+[Install]
+WantedBy=default.target

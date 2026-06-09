@@ -19,7 +19,7 @@ streams:
 
   DOCUMENTS:
     name: "DOCUMENTS"
-    subjects: ["docs.upload.*", "docs.process.*", "docs.result.*", "document.*"]
+    subjects: ["docs.upload.*", "docs.process.*", "docs.chunk.*", "docs.result.*", "document.*"]
     storage: "file"
     retention: "limits"
     max_age: 86400
