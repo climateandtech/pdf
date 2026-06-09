@@ -58,11 +58,12 @@ Manual verify:
 
 ## Full platform round trip (chunks + embed in DB)
 
-GPU smokes prove **parse + HybridChunker tiers** on NATS. End-to-end **Postgres CHUNK rows + embeddings** runs on **ct-platform**:
+GPU smokes prove **parse + HybridChunker tiers** on NATS. **Postgres CHUNK rows + embeddings** is **ct-platform** (Celery `chunk_pdf` → `embed_chunks`).
 
 ```bash
 cd ct-platform
 E2E_NATS_TEST=1 DOCLING_CHUNKER=hierarchical_hybrid ./scripts/docker-nats-ingest-e2e.sh
 ```
 
-Requires: test workers on `:4223`, platform test DB/Celery, Ollama embed on GPU.
+After platform deploy, ops runbook: **`ct-platform/docs/INDEXING_PIPELINE_OPS.md`**  
+(prod recovery: `backend/scripts/recover_stuck_embedding.py`, admin `chunk_pipeline` stats).
