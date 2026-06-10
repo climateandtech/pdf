@@ -81,6 +81,7 @@ class TierChunkRecord:
     token_count: int
     embed: bool
     parent_index: int | None = None
+    child_index: int | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
@@ -144,6 +145,60 @@ def _build_parent_records(
                 heading_to_parent_index[heading_path] = parent_index
             parent_index += 1
     return parent_records, heading_to_parent_index
+
+
+def _normalize_ws(text: str) -> str:
+    return " ".join((text or "").split())
+
+
+def _token_overlap_ratio(micro_text: str, child_text: str) -> float:
+    micro_tokens = set(_normalize_ws(micro_text).split())
+    if not micro_tokens:
+        return 0.0
+    child_tokens = set(_normalize_ws(child_text).split())
+    return len(micro_tokens & child_tokens) / len(micro_tokens)
+
+
+def _resolve_micro_child_index(
+    micro: TierChunkRecord,
+    child_records: list[TierChunkRecord],
+) -> int | None:
+    """Map a micro tier to the child hybrid chunk that contains it (text overlap)."""
+    micro_norm = _normalize_ws(micro.text)
+    if not micro_norm:
+        return None
+    heading = tuple(micro.heading_path)
+    pool = [child for child in child_records if tuple(child.heading_path) == heading]
+    if not pool:
+        pool = child_records
+    for child in pool:
+        child_norm = _normalize_ws(child.text)
+        if micro_norm in child_norm:
+            return child.chunk_index
+    best_child: TierChunkRecord | None = None
+    best_score = 0.0
+    for child in pool:
+        score = _token_overlap_ratio(micro.text, child.text)
+        if score > best_score:
+            best_score = score
+            best_child = child
+    if best_child is not None and best_score >= 0.5:
+        return best_child.chunk_index
+    return None
+
+
+def _micro_records_with_child_index(
+    micro_records: list[TierChunkRecord],
+    child_records: list[TierChunkRecord],
+) -> list[TierChunkRecord]:
+    """Attach child_index so platform links micro --contained by-- child, not parent."""
+    from dataclasses import replace
+
+    out: list[TierChunkRecord] = []
+    for micro in micro_records:
+        child_index = _resolve_micro_child_index(micro, child_records)
+        out.append(replace(micro, child_index=child_index))
+    return out
 
 
 def _hybrid_tier_records(
@@ -259,14 +314,6 @@ def chunk_hierarchical(
     )
 
     micro_chunker = _make_hybrid_chunker(micro_tokens)
-    micro_records = _hybrid_tier_records(
-        micro_chunker.chunk(dl_doc=document),
-        micro_chunker,
-        chunk_level="micro",
-        target_tokens=micro_tokens,
-        heading_to_parent_index=heading_to_parent_index,
-        start_index=0,
-    )
     child_records = _hybrid_tier_records(
         iter(child_hybrid),
         child_chunker,
@@ -274,6 +321,17 @@ def chunk_hierarchical(
         target_tokens=child_tokens,
         heading_to_parent_index=heading_to_parent_index,
         start_index=0,
+    )
+    micro_records = _micro_records_with_child_index(
+        _hybrid_tier_records(
+            micro_chunker.chunk(dl_doc=document),
+            micro_chunker,
+            chunk_level="micro",
+            target_tokens=micro_tokens,
+            heading_to_parent_index=heading_to_parent_index,
+            start_index=0,
+        ),
+        child_records,
     )
 
     elapsed_s = time.perf_counter() - started
