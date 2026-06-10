@@ -10,7 +10,7 @@ from typing import Any
 
 from config import NatsConfig
 from hierarchical_chunker import chunk_hierarchical
-from parse_artifact_storage import load_parse_artifacts
+from parse_artifact_storage import load_parse_artifacts, parse_artifact_metadata
 from result_publish import publish_docling_result
 from s3_client import S3DocumentClient
 from s3_config import S3Config
@@ -51,6 +51,7 @@ class DoclingChunkWorker:
                 f"{hierarchical_chunks.get('tier_counts')}"
             )
 
+            parse_artifacts = parse_artifact_metadata(job)
             response = {
                 "request_id": request_id,
                 "status": "success",
@@ -62,6 +63,7 @@ class DoclingChunkWorker:
                     "markdown": markdown,
                     "structured_data": structured_data,
                     "metadata": job.get("metadata") or {},
+                    "parse_artifacts": parse_artifacts,
                     "hierarchical_chunks": hierarchical_chunks,
                 },
             }

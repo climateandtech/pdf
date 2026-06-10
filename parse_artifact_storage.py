@@ -45,6 +45,25 @@ async def store_parse_artifacts(
     }
 
 
+_PARSE_ARTIFACT_KEYS = (
+    "parse_storage",
+    "parse_s3_bucket",
+    "docling_json_s3_key",
+    "markdown_s3_key",
+)
+
+
+def parse_artifact_metadata(artifacts: dict[str, Any] | None) -> dict[str, Any]:
+    """Return S3 pointers for platform ``resource_metadata.docling_artifacts``."""
+    if not isinstance(artifacts, dict):
+        return {}
+    return {
+        key: artifacts[key]
+        for key in _PARSE_ARTIFACT_KEYS
+        if artifacts.get(key) is not None
+    }
+
+
 async def load_parse_artifacts(client: Any, job: dict[str, Any]) -> tuple[dict[str, Any], str]:
     """Load Docling JSON and markdown referenced by a docs.chunk job."""
     json_key = job.get("docling_json_s3_key")

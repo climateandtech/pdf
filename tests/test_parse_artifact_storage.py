@@ -12,6 +12,7 @@ from parse_artifact_storage import (
     docling_json_s3_key,
     load_parse_artifacts,
     markdown_s3_key,
+    parse_artifact_metadata,
     store_parse_artifacts,
 )
 
@@ -68,6 +69,22 @@ async def test_load_parse_artifacts_round_trip():
 
     assert loaded_structured == structured
     assert markdown == "# Hello"
+
+
+def test_parse_artifact_metadata_normalizes_s3_pointers():
+    artifacts = {
+        "parse_storage": "s3",
+        "parse_s3_bucket": "documents",
+        "docling_json_s3_key": "parsed/r1/docling.json",
+        "markdown_s3_key": "parsed/r1/markdown.md",
+        "extra": "ignored",
+    }
+    assert parse_artifact_metadata(artifacts) == {
+        "parse_storage": "s3",
+        "parse_s3_bucket": "documents",
+        "docling_json_s3_key": "parsed/r1/docling.json",
+        "markdown_s3_key": "parsed/r1/markdown.md",
+    }
 
 
 def test_build_chunk_job_includes_metadata_and_artifacts():
