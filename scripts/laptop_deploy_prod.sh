@@ -27,6 +27,14 @@ for arg in "$@"; do
   esac
 done
 
+if [ "$GIT_RESET" = true ]; then
+  if [ "${GPU_DEPLOY_RESET_OK:-}" != "1" ]; then
+    echo "ERROR: --reset runs 'git reset --hard' on the GPU and destroys server-local changes." >&2
+    echo "Ask the operator to confirm, then: GPU_DEPLOY_RESET_OK=1 $0 --reset" >&2
+    exit 1
+  fi
+fi
+
 RESET_CMD="git merge --ff-only ${REMOTE}/${BRANCH}"
 [ "$GIT_RESET" = true ] && RESET_CMD="git reset --hard ${REMOTE}/${BRANCH}"
 
@@ -35,6 +43,14 @@ gpu_smoldocling "
   set -e
   cd ${GPU_PROD_DIR}
   git fetch ${REMOTE} ${BRANCH}
+  if ! git diff --quiet || ! git diff --cached --quiet; then
+    echo 'WARN: GPU working tree has local changes:' >&2
+    git status -sb >&2
+    if [ \"${GIT_RESET}\" != true ]; then
+      echo 'Refusing deploy: stash/commit on GPU, or explicit GPU_DEPLOY_RESET_OK=1 --reset after operator approval.' >&2
+      exit 1
+    fi
+  fi
   ${RESET_CMD}
   git log -1 --oneline
   source venv/bin/activate
@@ -45,7 +61,10 @@ gpu_smoldocling "
     pip install -r requirements.txt
   fi
   pip install -r requirements-gliner.txt
-  if [ -f scripts/cudnn_probe.py ]; then python scripts/cudnn_probe.py; fi
+  if python -c 'from worker_runtime import verify_cudnn_conv2d' 2>/dev/null \
+    && [ -f scripts/cudnn_probe.py ]; then
+    python scripts/cudnn_probe.py
+  fi
   python scripts/verify_torch_import.py
   pytest tests/test_bootstrap_gpu.py tests/test_gpu_memory_config.py \
     tests/test_verify_torch_import.py tests/test_worker_runtime.py \
