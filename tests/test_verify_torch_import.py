@@ -13,15 +13,17 @@ def test_verify_torch_import_main_success():
     mock_conv_mod.DocumentConverter = mock_dc
 
     with patch("worker_runtime.bootstrap_gpu", return_value="20gb_nats") as boot:
-        with patch.dict(
-            sys.modules,
-            {
-                "docling": MagicMock(),
-                "docling.document_converter": mock_conv_mod,
-            },
-        ):
-            from scripts.verify_torch_import import main
+        with patch("worker_runtime.verify_cudnn_conv2d") as cudnn:
+            with patch.dict(
+                sys.modules,
+                {
+                    "docling": MagicMock(),
+                    "docling.document_converter": mock_conv_mod,
+                },
+            ):
+                from scripts.verify_torch_import import main
 
-            assert main() == 0
-            boot.assert_called_once()
-            mock_dc.assert_called_once()
+                assert main() == 0
+                boot.assert_called_once()
+                cudnn.assert_called_once()
+                mock_dc.assert_called_once()

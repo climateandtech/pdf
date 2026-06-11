@@ -21,7 +21,7 @@ running additional `docling_chunk_worker` processes (same durable `docling_chunk
 
 Docling production venv: **`venv/`** — pinned `docling>=2.96.0,<2.97.0` in `requirements.txt` (pass-1 default `fast_text_tables`).
 
-Pass-1 requests from the platform always include `docling_options` from `DOCLING_PARSE_MODE` (default `fast_text_tables`). Pass-2 enrichment is queued by the platform when `FEATURE_MULTISTAGE_INDEXING=1` and the document profile flags OCR/VLM/table follow-up.
+Pass-1 requests from the platform always include `docling_options` from `DOCLING_PARSE_MODE` (default `baseline`: OCR + tables, no VLM). Pass-2 enrichment is queued by the platform when `FEATURE_MULTISTAGE_INDEXING=1` and the document profile flags OCR/VLM/table follow-up.
 
 ## Systemd user units (production)
 
@@ -168,7 +168,7 @@ Emergency: `DOCLING_ACCELERATOR_PREFERENCE=cpu` (Docling never touches GPU).
 | Ollama bge-m3 NaN | `OLLAMA_FLASH_ATTENTION=false` on marc Ollama (`coolify-provisioning/gpu-fix-ollama-bge-m3-nan.sh`) |
 | cuDNN / GPU OOM during parse | Worker retries once on CPU (`oom_retry`); check `device_reason` in `docs.result`; tune `DOCLING_GPU_CAP_GB` / Ollama model size |
 | `CUDNN_STATUS_NOT_INITIALIZED` on conv2d | Mixed `nvidia-*-cu13` wheels in venv — reinstall with `pip install -c constraints-cu12.txt -r requirements.txt`; run `python scripts/cudnn_probe.py` |
-| GPU git pull blocked by local edits | `gpu-deploy-worker.sh --reset` from laptop or stash on GPU |
+| GPU git pull blocked by local edits | **Do not** `--reset` without operator approval. Inspect `git status` on GPU; stash/commit server edits or merge manually. Safe recovery only: `./scripts/laptop_gpu_recover_workers.sh` |
 
 ## SSH access
 

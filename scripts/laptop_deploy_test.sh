@@ -48,9 +48,9 @@ gpu_smoldocling "
   pytest tests/test_bootstrap_gpu.py tests/test_gpu_memory_config.py \
     tests/test_verify_torch_import.py tests/test_worker_runtime.py \
     tests/test_result_publish.py tests/test_parse_artifact_storage.py -m unit -q --no-cov
-  ./scripts/install_systemd_test_workers.sh
   python scripts/ensure_documents_stream.py
 "
+gpu_systemd_user "cd ${GPU_TEST_DIR} && ./scripts/install_systemd_test_workers.sh"
 
 if [ "$RESTART" = true ]; then
   gpu_systemd_user "

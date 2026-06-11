@@ -131,7 +131,8 @@ def resolve_accelerator_device(options: dict[str, Any] | None) -> dict[str, Any]
     total_gb = stats["total_gb"]
     used_gb = stats["used_gb"]
     ollama_reserve_gb = _env_float("DOCLING_OLLAMA_RESERVE_GB", 12.0)
-    cold_cuda_gb = _env_float("DOCLING_VRAM_COLD_CUDA_GB", 8.0)
+    # Measured fast_text_tables spike on Opus (~1.1–1.5 GiB); 2.5 GiB leaves headroom on 20GB + Ollama.
+    cold_cuda_gb = _env_float("DOCLING_VRAM_COLD_CUDA_GB", 2.5)
     docling_cap_gb = _env_float("DOCLING_GPU_CAP_GB", 8.0)
 
     max_docling_physical = max(0.0, total_gb - ollama_reserve_gb)

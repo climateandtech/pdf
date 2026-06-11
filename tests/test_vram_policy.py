@@ -42,6 +42,29 @@ class TestVramPolicy:
         assert opts["accelerator_device"] == "cuda"
         assert opts["device_reason"] == "vram_ok"
 
+    def test_resolve_cuda_with_gemma_qat_and_measured_cold_spike(self, monkeypatch):
+        """20GB card + ~5.8GB Ollama must not be blocked by an 8GB cold-spike budget."""
+        monkeypatch.delenv("DOCLING_VRAM_COLD_CUDA_GB", raising=False)
+        monkeypatch.setenv("DOCLING_OLLAMA_RESERVE_GB", "12")
+        with patch(
+            "vram_policy.get_gpu_vram_stats_gb",
+            return_value={"total_gb": 19.58, "used_gb": 5.77, "free_gb": 13.81},
+        ):
+            opts = resolve_accelerator_device({"do_table_structure": True})
+        assert opts["accelerator_device"] == "cuda"
+        assert opts["device_reason"] == "vram_ok"
+
+    def test_legacy_8gb_cold_budget_blocks_cuda_on_20gb_card(self, monkeypatch):
+        monkeypatch.setenv("DOCLING_OLLAMA_RESERVE_GB", "12")
+        monkeypatch.setenv("DOCLING_VRAM_COLD_CUDA_GB", "8")
+        with patch(
+            "vram_policy.get_gpu_vram_stats_gb",
+            return_value={"total_gb": 19.58, "used_gb": 5.77, "free_gb": 13.81},
+        ):
+            opts = resolve_accelerator_device({})
+        assert opts["accelerator_device"] == "cpu"
+        assert opts["device_reason"] == "ollama_reserve"
+
     def test_forced_cpu_preference(self, monkeypatch):
         monkeypatch.setenv("DOCLING_ACCELERATOR_PREFERENCE", "cpu")
         opts = resolve_accelerator_device({})

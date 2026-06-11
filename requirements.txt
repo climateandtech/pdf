@@ -1,5 +1,6 @@
 # Core Docling distributed processing dependencies
 # Pin torch/torchvision together (mismatch causes torchvision.extension ImportError on GPU)
+# After install: pip install -c constraints-cu12.txt -r requirements.txt
 torch==2.6.0
 torchvision==0.21.0
 # Benchmark-validated on GPU (2026-05): fast_text_tables + rich + table structure.

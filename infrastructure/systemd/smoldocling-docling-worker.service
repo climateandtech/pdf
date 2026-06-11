@@ -12,6 +12,7 @@ EnvironmentFile=-/home/smoldocling/apps/pdf/.env
 Environment=DOCLING_GPU_PROFILE=20gb_capped
 Environment=DOCLING_GPU_CAP_GB=8
 Environment=DOCLING_OLLAMA_RESERVE_GB=12
+Environment=DOCLING_VRAM_COLD_CUDA_GB=2.5
 Environment=DOCLING_CPU_NUM_THREADS=8
 Environment=OMP_NUM_THREADS=8
 ExecStart=/home/smoldocling/apps/pdf/venv/bin/python /home/smoldocling/apps/pdf/docling_worker.py

@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from worker_runtime import bootstrap_gpu, cleanup_gpu_memory, resolve_profile_name
+from worker_runtime import bootstrap_gpu, cleanup_gpu_memory, resolve_profile_name, verify_cudnn_conv2d, warmup_cuda_cudnn
 
 
 @pytest.mark.unit
@@ -23,7 +23,8 @@ class TestBootstrapGpu:
                 with patch(
                     "gpu_memory_config.GPUMemoryOptimizer.print_memory_status"
                 ):
-                    name = bootstrap_gpu("full")
+                    with patch("worker_runtime.warmup_cuda_cudnn"):
+                        name = bootstrap_gpu("full")
 
         assert name == "20gb_capped"
         apply.assert_called_once_with("20gb_capped")
@@ -119,3 +120,20 @@ def test_resolve_profile_from_env(monkeypatch):
 @pytest.mark.unit
 def test_resolve_profile_full_maps_to_capped():
     assert resolve_profile_name("full") == "20gb_capped"
+
+
+@pytest.mark.unit
+def test_warmup_cuda_cudnn_skips_without_cuda():
+    fake_torch = MagicMock()
+    fake_torch.cuda.is_available.return_value = False
+    with patch.dict("sys.modules", {"torch": fake_torch}):
+        assert warmup_cuda_cudnn() is True
+
+
+@pytest.mark.unit
+def test_warmup_cuda_cudnn_returns_false_on_runtime_error():
+    fake_torch = MagicMock()
+    fake_torch.cuda.is_available.return_value = True
+    with patch("worker_runtime.verify_cudnn_conv2d", side_effect=RuntimeError("cuDNN error")):
+        with patch.dict("sys.modules", {"torch": fake_torch}):
+            assert warmup_cuda_cudnn() is False

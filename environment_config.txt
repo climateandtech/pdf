@@ -26,6 +26,8 @@ DEBUG=true
 # capped_5gb | b | 5gb → ~5GB VRAM cap (path B benchmark)
 DOCLING_GPU_PROFILE=full
 # DOCLING_GPU_CAP_GB=5
+DOCLING_OLLAMA_RESERVE_GB=12
+DOCLING_VRAM_COLD_CUDA_GB=2.5
 
 # Large docling results: inline NATS when under NATS_SAFE_INLINE_BYTES (~900KB), else S3 spill
 # NATS_SAFE_INLINE_BYTES=900000

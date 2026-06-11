@@ -5,11 +5,12 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from worker_runtime import bootstrap_gpu
+from worker_runtime import bootstrap_gpu, verify_cudnn_conv2d
 
 
 def main() -> int:
     profile = bootstrap_gpu()
+    verify_cudnn_conv2d()
     from docling.document_converter import DocumentConverter  # noqa: WPS433
 
     DocumentConverter()
