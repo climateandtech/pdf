@@ -9,7 +9,7 @@ import logging
 from typing import Any
 
 from config import NatsConfig
-from hierarchical_chunker import chunk_hierarchical
+from hierarchical_chunker import chunk_hierarchical, warmup_chunk_tokenizer
 from parse_artifact_storage import load_parse_artifacts, parse_artifact_metadata
 from result_publish import publish_docling_result
 from s3_client import S3DocumentClient
@@ -141,9 +141,11 @@ class DoclingChunkWorker:
 
 
 async def main() -> None:
-    """Entry point for CPU chunk worker."""
-    print("🚀 Starting Docling Chunk Worker (CPU)")
+    """Entry point for GPU-host chunk worker (bge-m3 tokenizer, CPU HybridChunker)."""
+    print("🚀 Starting Docling Chunk Worker (GPU host, bge-m3 tokenizer)")
     print("=" * 50)
+    model_name = warmup_chunk_tokenizer()
+    print(f"✅ Chunk tokenizer ready: {model_name}")
     worker = DoclingChunkWorker()
     await worker.setup()
     await worker.start_listening()

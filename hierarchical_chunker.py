@@ -15,11 +15,49 @@ DEFAULT_MICRO_TOKENS = int(os.getenv("CHUNK_MICRO_TARGET_TOKENS", "150"))
 DEFAULT_CHILD_TOKENS = int(os.getenv("CHUNK_TARGET_TOKENS", "512"))
 DEFAULT_PARENT_MAX_TOKENS = int(os.getenv("CHUNK_PARENT_MAX_TOKENS", "2000"))
 DEFAULT_MICRO_OVERLAP = int(os.getenv("CHUNK_MICRO_TOKEN_OVERLAP", "32"))
+DEFAULT_CHUNK_TOKENIZER_MODEL = os.getenv("CHUNK_TOKENIZER_MODEL", "BAAI/bge-m3")
+
+
+def _chunk_tokenizer_require_cuda() -> bool:
+    """Whether bge-m3 chunk tokenizer load requires a CUDA-capable GPU host."""
+    raw = (os.getenv("CHUNK_TOKENIZER_REQUIRE_CUDA") or "1").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
+
+
+def _ensure_chunk_tokenizer_cuda() -> None:
+    """Fail fast when production chunk worker is not on a GPU host."""
+    if not _chunk_tokenizer_require_cuda():
+        return
+    import torch
+
+    if not torch.cuda.is_available():
+        msg = (
+            "CHUNK_TOKENIZER_REQUIRE_CUDA=1 but torch.cuda.is_available() is False; "
+            "chunk worker must run on the GPU host (smoldocling)"
+        )
+        raise RuntimeError(msg)
+
+
+def warmup_chunk_tokenizer(*, max_tokens: int = DEFAULT_CHILD_TOKENS) -> str:
+    """Preload bge-m3 tokenizer on GPU host startup (vocabulary only, no embed)."""
+    _ensure_chunk_tokenizer_cuda()
+    chunker = _make_hybrid_chunker(max_tokens)
+    model_name = str(chunker.tokenizer.get_tokenizer().name_or_path)
+    return model_name
 
 
 def approx_token_count(text: str) -> int:
     """Whitespace token proxy aligned with platform chunking_config."""
     return len(re.findall(r"\S+", text or ""))
+
+
+def _token_count(text: str, *, chunker: Any | None = None) -> int:
+    """Count tokens with the active HybridChunker tokenizer (bge-m3 vocab)."""
+    if not text:
+        return 0
+    if chunker is not None:
+        return int(chunker.tokenizer.count_tokens(text=text))
+    return approx_token_count(text)
 
 
 def _heading_path(chunk: Any) -> list[str]:
@@ -228,19 +266,20 @@ def load_docling_document(structured_data: dict[str, Any]) -> Any:
 
 
 def _make_hybrid_chunker(max_tokens: int) -> Any:
+    """Build a HybridChunker sized for Ollama bge-m3 embed (same tokenizer vocab)."""
     from docling.chunking import HybridChunker
+    from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
 
-    try:
-        from docling_core.transforms.chunker.tokenizer.huggingface import HuggingFaceTokenizer
-
-        tokenizer = HuggingFaceTokenizer(model_name="BAAI/bge-m3")
-        return HybridChunker(
-            tokenizer=tokenizer,
-            max_tokens=max_tokens,
-            merge_peers=True,
-        )
-    except Exception:
-        return HybridChunker(max_tokens=max_tokens, merge_peers=True)
+    _ensure_chunk_tokenizer_cuda()
+    tokenizer = HuggingFaceTokenizer.from_pretrained(
+        model_name=DEFAULT_CHUNK_TOKENIZER_MODEL,
+        max_tokens=max_tokens,
+    )
+    return HybridChunker(
+        tokenizer=tokenizer,
+        max_tokens=max_tokens,
+        merge_peers=True,
+    )
 
 
 @dataclass(frozen=True)
@@ -319,7 +358,7 @@ def _build_parent_records(
                     text=part_text,
                     contextual_text=contextual,
                     heading_path=list(heading_path),
-                    token_count=approx_token_count(part_text),
+                    token_count=_token_count(part_text, chunker=hybrid_chunker),
                     embed=False,
                     parent_index=None,
                     metadata=parent_metadata,
@@ -410,7 +449,7 @@ def _hybrid_tier_records(
                 text=text,
                 contextual_text=contextual,
                 heading_path=heading_path,
-                token_count=approx_token_count(text),
+                token_count=_token_count(text, chunker=hybrid_chunker),
                 embed=True,
                 parent_index=heading_to_parent_index.get(tuple(heading_path)),
                 metadata=_extract_docling_chunk_metadata(chunk, ref_index=ref_index),
@@ -474,6 +513,7 @@ def chunk_hierarchical(
     document = load_docling_document(structured_data)
     ref_index = _build_docling_ref_index(document)
 
+    child_chunker = _make_hybrid_chunker(child_tokens)
     element_records: list[TierChunkRecord] = []
     for index, chunk in enumerate(HierarchicalChunker().chunk(dl_doc=document)):
         text = _chunk_text(chunk)
@@ -487,13 +527,12 @@ def chunk_hierarchical(
                 text=text,
                 contextual_text=None,
                 heading_path=_heading_path(chunk),
-                token_count=approx_token_count(text),
+                token_count=_token_count(text, chunker=child_chunker),
                 embed=False,
                 metadata=_extract_docling_chunk_metadata(chunk, ref_index=ref_index),
             )
         )
 
-    child_chunker = _make_hybrid_chunker(child_tokens)
     child_hybrid = list(child_chunker.chunk(dl_doc=document))
     parent_records, heading_to_parent_index = _build_parent_records(
         child_hybrid,

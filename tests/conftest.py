@@ -1,8 +1,13 @@
-import pytest
 import asyncio
-from unittest.mock import AsyncMock, MagicMock, patch
-import nats
-import json
+from unittest.mock import AsyncMock
+
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _chunk_tokenizer_no_cuda_required(monkeypatch):
+    """Unit tests run on laptops without CUDA; production chunk worker requires GPU."""
+    monkeypatch.setenv("CHUNK_TOKENIZER_REQUIRE_CUDA", "0")
 
 
 @pytest.fixture(scope="session")
@@ -28,20 +33,20 @@ async def mock_nc():
 async def mock_js():
     """Mock JetStream context."""
     mock_js = AsyncMock()
-    
+
     # Mock stream operations
     mock_js.add_stream = AsyncMock()
     mock_js.delete_stream = AsyncMock()
     mock_js.stream_info = AsyncMock()
-    
+
     # Mock consumer operations
     mock_js.add_consumer = AsyncMock()
     mock_js.delete_consumer = AsyncMock()
-    
+
     # Mock publish/subscribe operations
     mock_js.publish = AsyncMock()
     mock_js.pull_subscribe = AsyncMock()
-    
+
     return mock_js
 
 
@@ -49,14 +54,14 @@ async def mock_js():
 async def mock_object_store():
     """Mock JetStream Object Store."""
     mock_os = AsyncMock()
-    
+
     # Mock object operations
     mock_os.put = AsyncMock()
     mock_os.get = AsyncMock()
     mock_os.delete = AsyncMock()
     mock_os.list = AsyncMock()
     mock_os.info = AsyncMock()
-    
+
     return mock_os
 
 
@@ -85,4 +90,4 @@ def sample_document():
             "size": 1024,
             "mime_type": "application/pdf"
         }
-    } 
+    }

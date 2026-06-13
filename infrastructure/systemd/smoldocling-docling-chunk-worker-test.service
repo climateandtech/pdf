@@ -1,5 +1,5 @@
 [Unit]
-Description=PDF Docling chunk NATS worker — test broker (CPU, pdf-test)
+Description=PDF Docling chunk NATS worker — test broker (GPU host, bge-m3 tokenizer)
 After=network-online.target
 Wants=network-online.target
 StartLimitIntervalSec=300
@@ -10,6 +10,8 @@ Type=simple
 WorkingDirectory=/home/smoldocling/apps/pdf-test
 EnvironmentFile=-/home/smoldocling/apps/pdf-test/.env
 Environment=OMP_NUM_THREADS=4
+Environment=CHUNK_TOKENIZER_MODEL=BAAI/bge-m3
+Environment=CHUNK_TOKENIZER_REQUIRE_CUDA=1
 ExecStart=/home/smoldocling/apps/pdf-test/venv/bin/python /home/smoldocling/apps/pdf-test/docling_chunk_worker.py
 Restart=always
 RestartSec=10

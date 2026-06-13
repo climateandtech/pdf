@@ -20,6 +20,23 @@ _FIXTURE = (
 )
 
 
+def test_make_hybrid_chunker_uses_bge_m3_tokenizer():
+    """Hypothesis: _make_hybrid_chunker builds a bge-m3 tokenizer, not the MiniLM default."""
+    chunker = _make_hybrid_chunker(512)
+    name = str(chunker.tokenizer.get_tokenizer().name_or_path)
+    assert "bge-m3" in name.lower()
+    assert chunker.max_tokens == 512
+
+
+def test_make_hybrid_chunker_honors_per_tier_max_tokens():
+    """Hypothesis: micro (150) and child (512) chunkers carry distinct token limits."""
+    micro = _make_hybrid_chunker(150)
+    child = _make_hybrid_chunker(512)
+    assert micro.max_tokens == 150
+    assert child.max_tokens == 512
+    assert micro.max_tokens != child.max_tokens
+
+
 def test_hybrid_child_chunk_carries_docling_doc_items():
     """Hypothesis: HybridChunker meta.doc_items land on child tier metadata."""
     structured = json.loads(_FIXTURE.read_text())
