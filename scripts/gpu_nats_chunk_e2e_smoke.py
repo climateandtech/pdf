@@ -15,6 +15,12 @@ import aioboto3
 import nats
 from dotenv import load_dotenv
 
+_SCRIPT_ROOT = Path(__file__).resolve().parents[1]
+if str(_SCRIPT_ROOT) not in sys.path:
+    sys.path.insert(0, str(_SCRIPT_ROOT))
+
+from result_publish import hydrate_docling_result_envelope  # noqa: E402
+
 
 def _load_env() -> None:
     for path in (
@@ -129,6 +135,18 @@ async def main() -> int:
         print(f"FAIL: no docs.result within {args.timeout}s")
         await nc.close()
         return 1
+
+    if result.get("result_storage") == "s3":
+        print(
+            "hydrating spill envelope "
+            f"s3://{result.get('result_s3_bucket')}/{result.get('result_s3_key')} "
+            f"({result.get('result_bytes')} bytes)"
+        )
+        result = await asyncio.to_thread(
+            hydrate_docling_result_envelope,
+            result,
+            default_bucket=bucket,
+        )
 
     status = result.get("status")
     body = result.get("result") or {}

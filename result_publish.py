@@ -81,6 +81,72 @@ def build_s3_envelope(
     return envelope
 
 
+def hydrate_docling_result_envelope(
+    data: Dict[str, Any],
+    *,
+    default_bucket: str | None = None,
+    s3_client: Any = None,
+) -> Dict[str, Any]:
+    """Merge full docs.result from S3 when the NATS message is a spill envelope.
+
+    Matches platform ``hydrate_pdf_result_from_storage`` so E2E smokes and
+    consumers validate spilled large-PDF results (prod or ct-storage-test).
+    """
+    s3_key = data.get("result_s3_key")
+    if not s3_key or data.get("result_storage") != "s3":
+        return data
+
+    bucket = (
+        data.get("result_s3_bucket")
+        or default_bucket
+        or os.getenv("S3_BUCKET")
+        or os.getenv("S3_BUCKET_NAME")
+    )
+    if not bucket:
+        raise ValueError(
+            "S3 spill envelope missing result_s3_bucket and no default bucket configured"
+        )
+
+    client = s3_client
+    if client is None:
+        import boto3  # noqa: PLC0415 — optional dep at call time for smoke scripts
+
+        client = boto3.client(
+            "s3",
+            endpoint_url=os.environ.get("S3_ENDPOINT_URL"),
+            region_name=os.environ.get("AWS_DEFAULT_REGION", "hel1"),
+            aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+            aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+        )
+
+    obj = client.get_object(Bucket=bucket, Key=s3_key)
+    stored = json.loads(obj["Body"].read())
+    stored_result = stored.get("result") or {}
+    inline = data.get("result") or {}
+    merged = dict(data)
+    merged["result"] = {
+        **stored_result,
+        "markdown": stored_result.get("markdown") or inline.get("markdown") or "",
+        "text": (
+            stored_result.get("text")
+            or stored_result.get("markdown")
+            or inline.get("text")
+            or ""
+        ),
+        "structured_data": (
+            stored_result.get("structured_data") or inline.get("structured_data") or {}
+        ),
+        "metadata": stored_result.get("metadata") or inline.get("metadata") or {},
+        "hierarchical_chunks": (
+            stored_result.get("hierarchical_chunks") or inline.get("hierarchical_chunks")
+        ),
+        "parse_artifacts": (
+            stored_result.get("parse_artifacts") or inline.get("parse_artifacts") or {}
+        ),
+    }
+    return merged
+
+
 async def publish_docling_result(client, subject: str, response: Dict[str, Any]) -> str:
     """
     Publish result on JetStream. Returns 'inline' or 's3'.
