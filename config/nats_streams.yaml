@@ -8,14 +8,14 @@ max_message_size: 65536
 streams:
   INDEX:
     name: "INDEX"
-    subjects: ["index.command.*", "index.notify.*"]
+    subjects: ["index.notify.*"]
     storage: "file"
     retention: "limits"
     max_age: 604800
     max_msgs: 100000
     max_consumers: -1
     replicas: 1
-    description: "Slack bot index ingest/search/backlog and notifications"
+    description: "Async index notifications (index.command.* stays core NATS request-reply)"
 
   DOCUMENTS:
     name: "DOCUMENTS"
