@@ -60,12 +60,26 @@ class DoclingChunkWorker:
         print(f"✅ Chunk Worker connected to S3: {self.s3_config.bucket_name}")
 
     async def _result_exists(self, request_id: str) -> bool:
-        """Return True when results/{request_id}.json already exists on S3."""
+        """Return True when results/{request_id}.json already exists on S3.
+
+        S3 missing-object (404 / NotFound) and transport errors return False so
+        we continue chunking — never crash the worker on a miss.
+        """
+        from botocore.exceptions import ClientError  # noqa: PLC0415 — optional at import
+
         key = result_envelope_s3_key(request_id)
         try:
             async with self.client.s3_client() as s3:
                 await s3.head_object(Bucket=self.s3_config.bucket_name, Key=key)
             return True
+        except ClientError as exc:
+            code = str((exc.response or {}).get("Error", {}).get("Code", ""))
+            http = (exc.response or {}).get("ResponseMetadata", {}).get("HTTPStatusCode")
+            if code in {"404", "NoSuchKey", "NotFound"} or http == 404:
+                logger.debug("result head_object miss for %s: %s", key, exc)
+                return False
+            logger.warning("result head_object failed for %s: %s — assuming missing", key, exc)
+            return False
         except (OSError, RuntimeError, ValueError, KeyError, TypeError) as exc:
             logger.debug("result head_object miss for %s: %s", key, exc)
             return False
