@@ -835,11 +835,15 @@ class DoclingWorker:
                 ) from e
             raise
         
-        # Subscribe to processing requests
-        subscription = await self.client.js.pull_subscribe(
-            subject=f"{self.nats_config.subject_prefix}.process.*",
+        # Subscribe to processing requests (long ack_wait + finite max_deliver)
+        from worker_ack import ack_heartbeat, ensure_pull_subscribe
+
+        process_subject = f"{self.nats_config.subject_prefix}.process.*"
+        subscription = await ensure_pull_subscribe(
+            self.client.js,
+            subject=process_subject,
             durable="docling_worker",
-            stream=self.nats_config.stream_name
+            stream=self.nats_config.stream_name,
         )
         
         # Main processing loop
@@ -853,7 +857,8 @@ class DoclingWorker:
                     
                     if messages:
                         for message in messages:
-                            await self.process_document_request(message)
+                            async with ack_heartbeat(message):
+                                await self.process_document_request(message)
                             processed_count += 1
                             print(f"📈 Docling Worker: Processed {processed_count} documents")
                     else:
@@ -869,8 +874,9 @@ class DoclingWorker:
                         print(f"⚠️  NATS connection closed: {loop_err} — reconnecting...")
                         await self.client.close()
                         await self.client.setup()
-                        subscription = await self.client.js.pull_subscribe(
-                            subject=f"{self.nats_config.subject_prefix}.process.*",
+                        subscription = await ensure_pull_subscribe(
+                            self.client.js,
+                            subject=process_subject,
                             durable="docling_worker",
                             stream=self.nats_config.stream_name,
                         )

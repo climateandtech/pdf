@@ -19,7 +19,7 @@ streams:
 
   DOCUMENTS:
     name: "DOCUMENTS"
-    subjects: ["docs.upload.*", "docs.process.*", "docs.chunk.*", "docs.result.*", "document.*"]
+    subjects: ["docs.upload.*", "docs.process.*", "docs.chunk.*", "docs.embed.*", "docs.embed.start.*", "docs.result.*", "document.*"]
     storage: "file"
     retention: "limits"
     max_age: 86400
@@ -90,6 +90,27 @@ streams:
     max_consumers: -1
     replicas: 1
     description: "Report Analyst analysis results"
+
+# Durables applied by coolify-provisioning ensure (SoT:
+# ct-platform/backend/config/nats_streams.yaml). Keep GPU docs process/chunk in sync.
+consumers:
+  pdf_service:
+    - name: "docling_worker"
+      stream: "DOCUMENTS"
+      durable: "docling_worker"
+      filter_subject: "docs.process.*"
+      ack_wait: 900
+      max_deliver: 5
+      max_ack_pending: 1
+      description: "GPU Docling parse worker"
+    - name: "docling_chunk_worker"
+      stream: "DOCUMENTS"
+      durable: "docling_chunk_worker"
+      filter_subject: "docs.chunk.*"
+      ack_wait: 900
+      max_deliver: 5
+      max_ack_pending: 1
+      description: "GPU Docling hierarchical chunk worker"
 
 auto_create:
   enabled: false

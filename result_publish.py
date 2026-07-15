@@ -43,14 +43,78 @@ def prepare_result_payload(response: Dict[str, Any]) -> Tuple[Dict[str, Any], by
     """
     Return (payload dict, serialized bytes) for NATS publish attempt.
 
-    Strips binary blobs from structured_data before measuring size.
+    Strips binary blobs from structured_data in-place on a shallow-copied
+    result dict (worker owns the response object; no deep json round-trip).
     """
-    payload = json.loads(json.dumps(response))  # deep copy
+    payload = dict(response)
     result = payload.get("result")
-    if isinstance(result, dict) and result.get("structured_data") is not None:
-        result["structured_data"] = _strip_binary_blobs(result["structured_data"])
+    if isinstance(result, dict):
+        result = dict(result)
+        payload["result"] = result
+        if result.get("structured_data") is not None:
+            result["structured_data"] = _strip_binary_blobs(result["structured_data"])
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     return payload, body
+
+
+def hierarchical_records_s3_key(request_id: str) -> str:
+    """S3 key for JSONL hierarchical chunk records."""
+    return f"results/{request_id}.records.jsonl"
+
+
+def result_envelope_s3_key(request_id: str) -> str:
+    """S3 key for slim docs.result envelope metadata (legacy full JSON also used this path)."""
+    return f"results/{request_id}.json"
+
+
+async def upload_hierarchical_records_jsonl(
+    client: Any,
+    request_id: str,
+    records: list[dict[str, Any]],
+) -> tuple[str, int]:
+    """Upload hierarchical records as JSONL; return (s3_key, byte_size)."""
+    lines = [
+        json.dumps(record, ensure_ascii=False, separators=(",", ":"))
+        for record in records
+    ]
+    body = ("\n".join(lines) + ("\n" if lines else "")).encode("utf-8")
+    key = hierarchical_records_s3_key(request_id)
+    await client.upload_bytes(key, body, content_type="application/x-ndjson")
+    return key, len(body)
+
+
+def build_slim_chunk_result(
+    *,
+    request_id: str,
+    backend_resource_id: Any,
+    parse_mode: Any,
+    docling_options: dict[str, Any] | None,
+    parse_artifacts: dict[str, Any],
+    hierarchical_chunks: dict[str, Any],
+    metadata: dict[str, Any] | None = None,
+    markdown: str = "",
+) -> Dict[str, Any]:
+    """Build docs.result without structured_data; records live on S3 as JSONL."""
+    hier = dict(hierarchical_chunks)
+    records = hier.pop("records", None) or []
+    # Caller should already have uploaded records; keep counts only.
+    if "record_count" not in hier:
+        hier["record_count"] = len(records)
+    return {
+        "request_id": request_id,
+        "status": "success",
+        "backend_resource_id": backend_resource_id,
+        "parse_mode": parse_mode,
+        "docling_options": docling_options or {},
+        "result": {
+            "text": "",
+            "markdown": markdown if len(markdown.encode("utf-8")) < 200_000 else "",
+            "structured_data": {},
+            "metadata": metadata or {},
+            "parse_artifacts": parse_artifacts,
+            "hierarchical_chunks": hier,
+        },
+    }
 
 
 def build_s3_envelope(
@@ -94,7 +158,7 @@ def build_s3_envelope(
 def _s3_object_size_bytes(client: Any, *, bucket: str, key: str) -> int | None:
     try:
         head = client.head_object(Bucket=bucket, Key=key)
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError, KeyError, TypeError) as exc:
         logger.warning("head_object failed for s3://%s/%s: %s", bucket, key, exc)
         return None
     return int(head.get("ContentLength") or 0)
@@ -112,8 +176,9 @@ def should_stream_hierarchical_from_s3(
         return True
     threshold_mb = int(os.getenv("CHUNK_STREAM_S3_THRESHOLD_MB", "50"))
     size_bytes = _s3_object_size_bytes(client, bucket=bucket, key=key)
+    # Fail closed: unknown size must stream (pointer hydrate), never full-load.
     if size_bytes is None:
-        return False
+        return True
     return size_bytes > threshold_mb * 1024 * 1024
 
 
@@ -253,7 +318,7 @@ def hydrate_docling_result_envelope(
 
     client = s3_client
     if client is None:
-        import boto3  # noqa: PLC0415 — optional dep at call time for smoke scripts
+        import boto3
 
         client = boto3.client(
             "s3",

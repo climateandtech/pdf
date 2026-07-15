@@ -19,6 +19,21 @@ When `hierarchical_chunk=true`, the parse worker uploads `parsed/{request_id}/do
 HybridChunker tiers and publishes `docs.result.{request_id}`. Scale chunk throughput by
 running additional `docling_chunk_worker` processes (same durable `docling_chunk_worker`).
 
+### JetStream durables (ack_wait / max_deliver)
+
+Workers subscribe only. Durable safety knobs live in
+`ct-platform/backend/config/nats_streams.yaml` (`consumers.pdf_service`) and are applied by:
+
+```bash
+cd coolify-provisioning
+./scripts/ensure-jetstream-streams.sh --via-gpu
+./scripts/ensure-jetstream-streams.sh --via-gpu --verify-only
+```
+
+Expected: `docling_worker` and `docling_chunk_worker` with `ack_wait=900`, `max_deliver=5`.
+After ensure recreates a durable, restart the matching systemd units. Ops detail:
+[JETSTREAM-OPS.md](../../coolify-provisioning/nats/JETSTREAM-OPS.md).
+
 Docling production venv: **`venv/`** — pinned `docling>=2.96.0,<2.97.0` in `requirements.txt` (pass-1 default `fast_text_tables`).
 
 Pass-1 requests from the platform always include `docling_options` from `DOCLING_PARSE_MODE` (default `baseline`: OCR + tables, no VLM). Pass-2 enrichment is queued by the platform when `FEATURE_MULTISTAGE_INDEXING=1` and the document profile flags OCR/VLM/table follow-up.

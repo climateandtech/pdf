@@ -9,13 +9,13 @@ from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from typing import Any, Iterator
 
-from result_publish import _strip_binary_blobs
-
 DEFAULT_MICRO_TOKENS = int(os.getenv("CHUNK_MICRO_TARGET_TOKENS", "150"))
 DEFAULT_CHILD_TOKENS = int(os.getenv("CHUNK_TARGET_TOKENS", "512"))
 DEFAULT_PARENT_MAX_TOKENS = int(os.getenv("CHUNK_PARENT_MAX_TOKENS", "2000"))
 DEFAULT_MICRO_OVERLAP = int(os.getenv("CHUNK_MICRO_TOKEN_OVERLAP", "32"))
 DEFAULT_CHUNK_TOKENIZER_MODEL = os.getenv("CHUNK_TOKENIZER_MODEL", "BAAI/bge-m3")
+# Char budget before calling HuggingFace tokenizer / semchunk (avoids 1.7M-token hangs).
+DEFAULT_SAFE_TOKENIZE_CHARS = int(os.getenv("CHUNK_SAFE_TOKENIZE_CHARS", "32000"))
 
 
 def _chunk_tokenizer_require_cuda() -> bool:
@@ -60,6 +60,196 @@ def _token_count(text: str, *, chunker: Any | None = None) -> int:
     return approx_token_count(text)
 
 
+_RESOLVED_REF_FIELDS = ()  # legacy name retained; resolved detail stays on S3
+
+
+class _TextChunk:
+    """Lightweight chunk stand-in after Docling-native doc_item pre-splits."""
+
+    def __init__(self, text: str, heading_path: list[str], metadata: dict[str, Any]) -> None:
+        self.text = text
+        self.meta = {"headings": heading_path, **metadata}
+
+
+def _doc_item_texts(chunk: Any) -> list[tuple[str, dict[str, Any]]]:
+    """Extract per-doc_item text segments from a HierarchicalChunker chunk."""
+    meta = getattr(chunk, "meta", None)
+    raw_meta = _docling_model_dump(meta) if meta is not None else {}
+    if not isinstance(raw_meta, dict):
+        return []
+    out: list[tuple[str, dict[str, Any]]] = []
+    for raw_item in raw_meta.get("doc_items") or []:
+        if not isinstance(raw_item, dict):
+            continue
+        text = str(raw_item.get("text") or "").strip()
+        # Prov-only refs often lack inline text; skip empty items.
+        if not text:
+            continue
+        out.append((text, _slim_item_fields(raw_item)))
+    return out
+
+
+def _split_chunk_along_doc_items(
+    chunk: Any,
+    *,
+    max_chars: int,
+) -> list[Any]:
+    """Split an oversized HierarchicalChunker chunk on Docling doc_item boundaries."""
+    heading = _heading_path(chunk)
+    items = _doc_item_texts(chunk)
+    if len(items) <= 1:
+        # Single item or no item texts: fall back to paragraph boundaries (still structural).
+        text = _chunk_text(chunk)
+        if len(text) <= max_chars:
+            return [chunk]
+        parts = [p.strip() for p in re.split(r"\n\s*\n", text) if p.strip()]
+        if len(parts) <= 1:
+            # Last resort: fixed windows so tokenizer never sees mega strings.
+            windows = []
+            for i in range(0, len(text), max_chars):
+                part = text[i : i + max_chars]
+                if part:
+                    windows.append(part)
+            return [
+                _TextChunk(part, heading, _extract_docling_chunk_metadata(chunk))
+                for part in windows
+            ]
+        return [
+            _TextChunk(part, heading, _extract_docling_chunk_metadata(chunk)) for part in parts
+        ]
+
+    segments: list[Any] = []
+    batch_texts: list[str] = []
+    batch_refs: list[str] = []
+    batch_labels: set[str] = set()
+    batch_pages: set[int] = set()
+    batch_len = 0
+
+    def flush() -> None:
+        nonlocal batch_texts, batch_refs, batch_labels, batch_pages, batch_len
+        if not batch_texts:
+            return
+        page_list = sorted(batch_pages)
+        labels = sorted(batch_labels)
+        meta = {
+            "content_labels": labels,
+            "page_numbers": page_list,
+            "page_number": page_list[0] if page_list else None,
+            "has_table": any(label in {"table", "document_index"} for label in labels),
+            "has_picture": "picture" in labels,
+            "has_image": any(label in {"picture", "figure"} for label in labels),
+            "self_refs": list(batch_refs),
+        }
+        segments.append(_TextChunk("\n\n".join(batch_texts), heading, meta))
+        batch_texts = []
+        batch_refs = []
+        batch_labels = set()
+        batch_pages = set()
+        batch_len = 0
+
+    for text, item in items:
+        if len(text) > max_chars:
+            flush()
+            for i in range(0, len(text), max_chars):
+                part = text[i : i + max_chars]
+                if not part:
+                    continue
+                page_list = sorted(item.get("page_numbers") or [])
+                label = str(item.get("label") or "")
+                labels = [label] if label else []
+                meta = {
+                    "content_labels": labels,
+                    "page_numbers": page_list,
+                    "page_number": page_list[0] if page_list else None,
+                    "has_table": label in {"table", "document_index"},
+                    "has_picture": label == "picture",
+                    "has_image": label in {"picture", "figure"},
+                    "self_refs": [str(item["self_ref"])] if item.get("self_ref") else [],
+                }
+                segments.append(_TextChunk(part, heading, meta))
+            continue
+        if batch_texts and batch_len + len(text) + 2 > max_chars:
+            flush()
+        batch_texts.append(text)
+        if item.get("self_ref"):
+            batch_refs.append(str(item["self_ref"]))
+        if item.get("label"):
+            batch_labels.add(str(item["label"]))
+        batch_pages.update(item.get("page_numbers") or [])
+        batch_len += len(text) + 2
+    flush()
+    return segments or [chunk]
+
+
+def _iter_size_safe_hierarchical_chunks(
+    document: Any,
+    *,
+    max_chars: int = DEFAULT_SAFE_TOKENIZE_CHARS,
+) -> Iterator[Any]:
+    """HierarchicalChunker output with Docling-native pre-split of oversized chunks."""
+    from docling.chunking import HierarchicalChunker
+
+    for chunk in HierarchicalChunker().chunk(dl_doc=document):
+        text = _chunk_text(chunk)
+        if len(text) <= max_chars:
+            yield chunk
+            continue
+        yield from _split_chunk_along_doc_items(chunk, max_chars=max_chars)
+
+
+def _hybrid_chunks_bounded(document: Any, chunker: Any) -> list[Any]:
+    """Hybrid-style chunking that never HF-tokenizes mega strings.
+
+    Uses HierarchicalChunker + doc_item pre-split, then Docling HybridChunker's
+    tokenizer only on size-safe segments (and its own split when still over max_tokens).
+    """
+    max_tokens = int(getattr(chunker, "max_tokens", DEFAULT_CHILD_TOKENS) or DEFAULT_CHILD_TOKENS)
+    max_chars = max(DEFAULT_SAFE_TOKENIZE_CHARS, max_tokens * 4)
+    pieces = list(_iter_size_safe_hierarchical_chunks(document, max_chars=max_chars))
+
+    out: list[Any] = []
+    for piece in pieces:
+        text = _chunk_text(piece)
+        if not text:
+            continue
+        # Approx first — only call HF when under the char budget.
+        if len(text) > max_chars:
+            out.extend(_split_chunk_along_doc_items(piece, max_chars=max_chars))
+            continue
+        token_count = _token_count(text, chunker=chunker)
+        if token_count <= max_tokens:
+            out.append(piece)
+            continue
+        # Over budget but size-safe: use HybridChunker.split path if available,
+        # otherwise paragraph windows under max_tokens (approx).
+        split_fn = getattr(chunker, "split", None) or getattr(chunker, "_split", None)
+        if callable(split_fn):
+            try:
+                out.extend(list(split_fn(piece)))
+                continue
+            except (TypeError, ValueError, AttributeError, RuntimeError):
+                # Fall through to approx word windows when Docling split rejects TextChunk.
+                pass
+        approx_budget = max(max_tokens * 4, 500)
+        words = re.findall(r"\S+", text)
+        start = 0
+        heading = _heading_path(piece)
+        base_meta = (
+            piece.meta
+            if isinstance(getattr(piece, "meta", None), dict)
+            else _extract_docling_chunk_metadata(piece)
+        )
+        while start < len(words):
+            end = min(len(words), start + approx_budget)
+            part = " ".join(words[start:end])
+            meta = dict(base_meta) if isinstance(base_meta, dict) else {}
+            out.append(_TextChunk(part, heading, meta))
+            if end >= len(words):
+                break
+            start = end
+    return out
+
+
 def _heading_path(chunk: Any) -> list[str]:
     meta = getattr(chunk, "meta", None)
     if meta is None:
@@ -101,7 +291,7 @@ def _docling_model_dump(value: Any) -> Any:
 
 
 def _build_docling_ref_index(document: Any) -> dict[str, tuple[str, dict[str, Any]]]:
-    """Map Docling self_ref to (collection, item dict) for provenance enrichment."""
+    """Map Docling self_ref to (collection, item dict) for optional on-demand joins."""
     exported = document.export_to_dict() if hasattr(document, "export_to_dict") else {}
     index: dict[str, tuple[str, dict[str, Any]]] = {}
     for collection in ("texts", "tables", "pictures", "groups"):
@@ -117,44 +307,28 @@ def _build_docling_ref_index(document: Any) -> dict[str, tuple[str, dict[str, An
     return index
 
 
-_RESOLVED_REF_FIELDS = (
-    "label",
-    "prov",
-    "captions",
-    "annotations",
-    "footnotes",
-    "references",
-    "content_layer",
-    "parent",
-    "children",
-)
+def derive_contextual_text(text: str, heading_path: list[str] | None) -> str:
+    """Build contextual embed text from heading path + body (not stored on records)."""
+    body = (text or "").strip()
+    headings = [str(item) for item in (heading_path or []) if str(item).strip()]
+    if headings and body:
+        return "\n".join(headings) + "\n\n" + body
+    return body
 
 
-def _enrich_doc_item(
-    item: dict[str, Any],
-    *,
-    ref_index: dict[str, tuple[str, dict[str, Any]]] | None,
-) -> dict[str, Any]:
-    """Attach resolved Docling element metadata for a chunk doc_item."""
-    enriched = dict(item)
-    ref = enriched.get("self_ref")
-    if not ref_index or not ref:
-        return enriched
-    hit = ref_index.get(str(ref))
-    if hit is None:
-        return enriched
-    collection, resolved = hit
-    enriched["resolved"] = _strip_binary_blobs(
-        {
-            "collection": collection,
-            **{
-                key: resolved.get(key)
-                for key in _RESOLVED_REF_FIELDS
-                if resolved.get(key) is not None
-            },
-        }
-    )
-    return enriched
+def _slim_item_fields(item: dict[str, Any]) -> dict[str, Any]:
+    """Keep only lightweight provenance; resolved detail stays in docling.json."""
+    out: dict[str, Any] = {}
+    for key in ("self_ref", "label"):
+        if item.get(key) is not None:
+            out[key] = item.get(key)
+    pages: list[int] = []
+    for prov in item.get("prov") or []:
+        if isinstance(prov, dict) and prov.get("page_no") is not None:
+            pages.append(int(prov["page_no"]))
+    if pages:
+        out["page_numbers"] = sorted(set(pages))
+    return out
 
 
 def _extract_docling_chunk_metadata(
@@ -162,16 +336,34 @@ def _extract_docling_chunk_metadata(
     *,
     ref_index: dict[str, tuple[str, dict[str, Any]]] | None = None,
 ) -> dict[str, Any]:
-    """Capture HybridChunker/HierarchicalChunker meta on the chunk record."""
+    """Capture slim HybridChunker/HierarchicalChunker meta (no resolved doc_items blobs)."""
+    del ref_index  # kept for call-site compatibility; join via self_ref on demand
     meta = getattr(chunk, "meta", None)
     if meta is None:
         return {}
+
+    # Already-slim TextChunk metadata from doc_item pre-split.
+    if isinstance(meta, dict) and (
+        "self_refs" in meta or "content_labels" in meta or "page_numbers" in meta
+    ):
+        page_list = list(meta.get("page_numbers") or [])
+        content_labels = list(meta.get("content_labels") or [])
+        return {
+            "content_labels": content_labels,
+            "page_numbers": page_list,
+            "page_number": meta.get("page_number") or (page_list[0] if page_list else None),
+            "has_table": bool(meta.get("has_table"))
+            or any(label in {"table", "document_index"} for label in content_labels),
+            "has_picture": bool(meta.get("has_picture")) or "picture" in content_labels,
+            "has_image": bool(meta.get("has_image"))
+            or any(label in {"picture", "figure"} for label in content_labels),
+            "self_refs": list(meta.get("self_refs") or []),
+        }
 
     raw_meta = _docling_model_dump(meta)
     if not isinstance(raw_meta, dict):
         return {}
 
-    doc_items: list[dict[str, Any]] = []
     labels: set[str] = set()
     page_numbers: set[int] = set()
     self_refs: list[str] = []
@@ -179,71 +371,49 @@ def _extract_docling_chunk_metadata(
     for raw_item in raw_meta.get("doc_items") or []:
         if not isinstance(raw_item, dict):
             continue
-        item = _enrich_doc_item(raw_item, ref_index=ref_index)
+        item = _slim_item_fields(raw_item)
         label = str(item.get("label") or "")
         if label:
             labels.add(label)
         ref = item.get("self_ref")
         if ref:
             self_refs.append(str(ref))
-        for prov in item.get("prov") or []:
-            if not isinstance(prov, dict):
-                continue
-            page_no = prov.get("page_no")
-            if page_no is not None:
-                page_numbers.add(int(page_no))
-        doc_items.append(item)
+        page_numbers.update(item.get("page_numbers") or [])
 
-    origin = raw_meta.get("origin")
-    captions = raw_meta.get("captions")
     page_list = sorted(page_numbers)
     content_labels = sorted(labels)
 
-    return _strip_binary_blobs(
-        {
-            "schema_name": raw_meta.get("schema_name"),
-            "version": raw_meta.get("version"),
-            "doc_items": doc_items,
-            "captions": captions,
-            "origin": origin,
-            "content_labels": content_labels,
-            "page_numbers": page_list,
-            "page_number": page_list[0] if page_list else None,
-            "has_table": any(
-                label in {"table", "document_index"} for label in content_labels
-            ),
-            "has_picture": "picture" in content_labels,
-            "has_image": any(label in {"picture", "figure"} for label in content_labels),
-            "self_refs": self_refs,
-        }
-    )
+    return {
+        "content_labels": content_labels,
+        "page_numbers": page_list,
+        "page_number": page_list[0] if page_list else None,
+        "has_table": any(label in {"table", "document_index"} for label in content_labels),
+        "has_picture": "picture" in content_labels,
+        "has_image": any(label in {"picture", "figure"} for label in content_labels),
+        "self_refs": self_refs,
+    }
 
 
 def _aggregate_docling_metadata(metas: list[dict[str, Any]]) -> dict[str, Any]:
-    """Merge Docling metadata from sibling chunks (parent tier grouping)."""
+    """Merge slim Docling metadata from sibling chunks (parent tier grouping)."""
     if not metas:
         return {}
     if len(metas) == 1:
-        return dict(metas[0])
+        slim = dict(metas[0])
+        slim.pop("doc_items", None)
+        return slim
 
     labels: set[str] = set()
     page_numbers: set[int] = set()
-    doc_items: list[dict[str, Any]] = []
     self_refs: list[str] = []
-    origin = None
     for meta in metas:
         labels.update(meta.get("content_labels") or [])
         page_numbers.update(meta.get("page_numbers") or [])
-        doc_items.extend(meta.get("doc_items") or [])
         self_refs.extend(meta.get("self_refs") or [])
-        if origin is None and meta.get("origin"):
-            origin = meta.get("origin")
 
     page_list = sorted(page_numbers)
     content_labels = sorted(labels)
     return {
-        "doc_items": doc_items,
-        "origin": origin,
         "content_labels": content_labels,
         "page_numbers": page_list,
         "page_number": page_list[0] if page_list else None,
@@ -252,6 +422,9 @@ def _aggregate_docling_metadata(metas: list[dict[str, Any]]) -> dict[str, Any]:
         "has_image": any(label in {"picture", "figure"} for label in content_labels),
         "self_refs": self_refs,
         "aggregated_from_chunks": len(metas),
+        "child_indices": [
+            meta.get("chunk_index") for meta in metas if meta.get("chunk_index") is not None
+        ],
     }
 
 
@@ -302,24 +475,6 @@ class TierChunkRecord:
         return asdict(self)
 
 
-def _split_parent_text(text: str, *, max_tokens: int) -> list[str]:
-    tokens = re.findall(r"\S+", text)
-    if not tokens:
-        return []
-    if len(tokens) <= max_tokens:
-        return [text.strip()]
-
-    parts: list[str] = []
-    start = 0
-    while start < len(tokens):
-        end = min(len(tokens), start + max_tokens)
-        parts.append(" ".join(tokens[start:end]))
-        if end >= len(tokens):
-            break
-        start = end
-    return parts
-
-
 def _build_parent_records(
     hybrid_chunks: list[Any],
     hybrid_chunker: Any,
@@ -327,6 +482,8 @@ def _build_parent_records(
     parent_max_tokens: int,
     ref_index: dict[str, tuple[str, dict[str, Any]]] | None = None,
 ) -> tuple[list[TierChunkRecord], dict[tuple[str, ...], int]]:
+    """Build parents by packing whole Docling child chunks (no mid-chunk whitespace cuts)."""
+    del hybrid_chunker  # kept for call-site compatibility; packing uses approx tokens
     groups: dict[tuple[str, ...], list[Any]] = defaultdict(list)
     for chunk in hybrid_chunks:
         groups[tuple(_heading_path(chunk))].append(chunk)
@@ -334,21 +491,45 @@ def _build_parent_records(
     parent_records: list[TierChunkRecord] = []
     heading_to_parent_index: dict[tuple[str, ...], int] = {}
     parent_index = 0
+    # Global index aligned with child tier chunk_index (enumerate order of hybrid_chunks).
+    chunk_global_index = {id(chunk): idx for idx, chunk in enumerate(hybrid_chunks)}
     for heading_path, chunks in groups.items():
-        chunk_metas = [
-            _extract_docling_chunk_metadata(chunk, ref_index=ref_index) for chunk in chunks
-        ]
-        combined = "\n\n".join(_chunk_text(chunk) for chunk in chunks if _chunk_text(chunk))
-        for part_index, part_text in enumerate(
-            _split_parent_text(combined, max_tokens=parent_max_tokens)
-        ):
-            contextual = part_text
-            if heading_path:
-                contextual = "\n".join(heading_path) + "\n\n" + part_text
+        batches: list[list[Any]] = []
+        current: list[Any] = []
+        current_tokens = 0
+        for chunk in chunks:
+            text = _chunk_text(chunk)
+            if not text:
+                continue
+            # Whitespace proxy keeps parent packing cheap and HF-free.
+            tc = approx_token_count(text)
+            if current and current_tokens + tc > parent_max_tokens:
+                batches.append(current)
+                current = []
+                current_tokens = 0
+            current.append(chunk)
+            current_tokens += tc
+        if current:
+            batches.append(current)
+
+        for part_index, batch in enumerate(batches):
+            child_indices: list[int] = []
+            texts: list[str] = []
+            metas: list[dict[str, Any]] = []
+            for chunk in batch:
+                texts.append(_chunk_text(chunk))
+                global_idx = chunk_global_index.get(id(chunk))
+                meta = _extract_docling_chunk_metadata(chunk, ref_index=ref_index)
+                if global_idx is not None:
+                    meta = {**meta, "chunk_index": global_idx}
+                    child_indices.append(global_idx)
+                metas.append(meta)
+            part_text = "\n\n".join(texts)
             parent_metadata = {
                 "part_index": part_index,
-                "child_count": len(chunks),
-                **_aggregate_docling_metadata(chunk_metas),
+                "child_count": len(batch),
+                "child_indices": child_indices,
+                **_aggregate_docling_metadata(metas),
             }
             parent_records.append(
                 TierChunkRecord(
@@ -356,9 +537,9 @@ def _build_parent_records(
                     chunk_level="parent",
                     target_tokens=parent_max_tokens,
                     text=part_text,
-                    contextual_text=contextual,
+                    contextual_text=None,
                     heading_path=list(heading_path),
-                    token_count=_token_count(part_text, chunker=hybrid_chunker),
+                    token_count=approx_token_count(part_text),
                     embed=False,
                     parent_index=None,
                     metadata=parent_metadata,
@@ -382,18 +563,31 @@ def _token_overlap_ratio(micro_text: str, child_text: str) -> float:
     return len(micro_tokens & child_tokens) / len(micro_tokens)
 
 
+def _children_by_heading(
+    child_records: list[TierChunkRecord],
+) -> dict[tuple[str, ...], list[TierChunkRecord]]:
+    groups: dict[tuple[str, ...], list[TierChunkRecord]] = defaultdict(list)
+    for child in child_records:
+        groups[tuple(child.heading_path)].append(child)
+    return groups
+
+
 def _resolve_micro_child_index(
     micro: TierChunkRecord,
     child_records: list[TierChunkRecord],
+    *,
+    by_heading: dict[tuple[str, ...], list[TierChunkRecord]] | None = None,
+    max_candidates: int = 64,
 ) -> int | None:
     """Map a micro tier to the child hybrid chunk that contains it (text overlap)."""
     micro_norm = _normalize_ws(micro.text)
     if not micro_norm:
         return None
     heading = tuple(micro.heading_path)
-    pool = [child for child in child_records if tuple(child.heading_path) == heading]
-    if not pool:
-        pool = child_records
+    groups = by_heading if by_heading is not None else _children_by_heading(child_records)
+    pool = groups.get(heading) or child_records
+    if len(pool) > max_candidates:
+        pool = pool[:max_candidates]
     for child in pool:
         child_norm = _normalize_ws(child.text)
         if micro_norm in child_norm:
@@ -417,9 +611,14 @@ def _micro_records_with_child_index(
     """Attach child_index so platform links micro --contained by-- child, not parent."""
     from dataclasses import replace
 
+    by_heading = _children_by_heading(child_records)
     out: list[TierChunkRecord] = []
     for micro in micro_records:
-        child_index = _resolve_micro_child_index(micro, child_records)
+        child_index = _resolve_micro_child_index(
+            micro,
+            child_records,
+            by_heading=by_heading,
+        )
         out.append(replace(micro, child_index=child_index))
     return out
 
@@ -440,16 +639,20 @@ def _hybrid_tier_records(
         text = _chunk_text(chunk)
         if not text:
             continue
-        contextual = hybrid_chunker.contextualize(chunk)
+        # contextual_text is derived at embed time from heading_path + text (not stored).
+        if len(text) <= DEFAULT_SAFE_TOKENIZE_CHARS:
+            token_count = _token_count(text, chunker=hybrid_chunker)
+        else:
+            token_count = approx_token_count(text)
         records.append(
             TierChunkRecord(
                 chunk_index=start_index + offset,
                 chunk_level=chunk_level,
                 target_tokens=target_tokens,
                 text=text,
-                contextual_text=contextual,
+                contextual_text=None,
                 heading_path=heading_path,
-                token_count=_token_count(text, chunker=hybrid_chunker),
+                token_count=token_count,
                 embed=True,
                 parent_index=heading_to_parent_index.get(tuple(heading_path)),
                 metadata=_extract_docling_chunk_metadata(chunk, ref_index=ref_index),
@@ -466,9 +669,8 @@ def chunk_hybrid(
     """Single-tier Docling HybridChunker output (upper bound = max_tokens)."""
     started = time.perf_counter()
     document = load_docling_document(structured_data)
-    ref_index = _build_docling_ref_index(document)
     chunker = _make_hybrid_chunker(max_tokens)
-    hybrid_chunks = list(chunker.chunk(dl_doc=document))
+    hybrid_chunks = _hybrid_chunks_bounded(document, chunker)
     records = _hybrid_tier_records(
         iter(hybrid_chunks),
         chunker,
@@ -476,7 +678,7 @@ def chunk_hybrid(
         target_tokens=max_tokens,
         heading_to_parent_index={},
         start_index=0,
-        ref_index=ref_index,
+        ref_index=None,
     )
     elapsed_s = time.perf_counter() - started
     payload_records = [record.to_dict() for record in records]
@@ -493,7 +695,11 @@ def chunk_hybrid(
                 round(sum(token_counts) / len(token_counts), 1) if token_counts else 0.0
             ),
             "p95_chunk_tokens": (
-                sorted(token_counts)[max(0, int(0.95 * len(token_counts)) - 1)] if token_counts else 0
+                (
+                    sorted(token_counts)[max(0, int(0.95 * len(token_counts)) - 1)]
+                    if token_counts
+                    else 0
+                )
             ),
         },
     }
@@ -507,18 +713,19 @@ def chunk_hierarchical(
     parent_max_tokens: int = DEFAULT_PARENT_MAX_TOKENS,
 ) -> dict[str, Any]:
     """Build element/micro/child/parent tiers from stored Docling JSON."""
-    from docling.chunking import HierarchicalChunker
-
     started = time.perf_counter()
     document = load_docling_document(structured_data)
-    ref_index = _build_docling_ref_index(document)
 
     child_chunker = _make_hybrid_chunker(child_tokens)
     element_records: list[TierChunkRecord] = []
-    for index, chunk in enumerate(HierarchicalChunker().chunk(dl_doc=document)):
+    for index, chunk in enumerate(_iter_size_safe_hierarchical_chunks(document)):
         text = _chunk_text(chunk)
         if not text:
             continue
+        if len(text) <= DEFAULT_SAFE_TOKENIZE_CHARS:
+            token_count = _token_count(text, chunker=child_chunker)
+        else:
+            token_count = approx_token_count(text)
         element_records.append(
             TierChunkRecord(
                 chunk_index=index,
@@ -527,18 +734,18 @@ def chunk_hierarchical(
                 text=text,
                 contextual_text=None,
                 heading_path=_heading_path(chunk),
-                token_count=_token_count(text, chunker=child_chunker),
+                token_count=token_count,
                 embed=False,
-                metadata=_extract_docling_chunk_metadata(chunk, ref_index=ref_index),
+                metadata=_extract_docling_chunk_metadata(chunk, ref_index=None),
             )
         )
 
-    child_hybrid = list(child_chunker.chunk(dl_doc=document))
+    child_hybrid = _hybrid_chunks_bounded(document, child_chunker)
     parent_records, heading_to_parent_index = _build_parent_records(
         child_hybrid,
         child_chunker,
         parent_max_tokens=parent_max_tokens,
-        ref_index=ref_index,
+        ref_index=None,
     )
 
     micro_chunker = _make_hybrid_chunker(micro_tokens)
@@ -549,17 +756,17 @@ def chunk_hierarchical(
         target_tokens=child_tokens,
         heading_to_parent_index=heading_to_parent_index,
         start_index=0,
-        ref_index=ref_index,
+        ref_index=None,
     )
     micro_records = _micro_records_with_child_index(
         _hybrid_tier_records(
-            micro_chunker.chunk(dl_doc=document),
+            iter(_hybrid_chunks_bounded(document, micro_chunker)),
             micro_chunker,
             chunk_level="micro",
             target_tokens=micro_tokens,
             heading_to_parent_index=heading_to_parent_index,
             start_index=0,
-            ref_index=ref_index,
+            ref_index=None,
         ),
         child_records,
     )
@@ -579,7 +786,6 @@ def chunk_hierarchical(
     }
     searchable = [record for record in all_records if record.get("embed")]
     storage_bytes = sum(len(record.get("text") or "") for record in all_records)
-    storage_bytes += sum(len(record.get("contextual_text") or "") for record in all_records)
 
     return {
         "records": all_records,

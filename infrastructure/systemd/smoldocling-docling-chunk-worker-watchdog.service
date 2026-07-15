@@ -1,0 +1,12 @@
+[Unit]
+Description=Watchdog for smoldocling Docling chunk worker heartbeat
+After=smoldocling-docling-chunk-worker.service
+
+[Service]
+Type=oneshot
+WorkingDirectory=/home/smoldocling/apps/pdf
+EnvironmentFile=-/home/smoldocling/apps/pdf/.env
+Environment=CHUNK_WORKER_HEARTBEAT_PATH=/home/smoldocling/apps/pdf/chunk-worker.heartbeat
+Environment=CHUNK_JOB_TIMEOUT_S=3600
+Environment=CHUNK_WORKER_WATCHDOG_MARGIN_S=300
+ExecStart=/home/smoldocling/apps/pdf/scripts/chunk_worker_watchdog.sh

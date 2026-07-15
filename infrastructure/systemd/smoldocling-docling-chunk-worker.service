@@ -12,6 +12,8 @@ EnvironmentFile=-/home/smoldocling/apps/pdf/.env
 Environment=OMP_NUM_THREADS=4
 Environment=CHUNK_TOKENIZER_MODEL=BAAI/bge-m3
 Environment=CHUNK_TOKENIZER_REQUIRE_CUDA=1
+Environment=CHUNK_WORKER_HEARTBEAT_PATH=/home/smoldocling/apps/pdf/chunk-worker.heartbeat
+Environment=CHUNK_JOB_TIMEOUT_S=3600
 ExecStart=/home/smoldocling/apps/pdf/venv/bin/python /home/smoldocling/apps/pdf/docling_chunk_worker.py
 Restart=always
 RestartSec=10
