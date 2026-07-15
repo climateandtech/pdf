@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import json
 
 import pytest
@@ -89,6 +90,39 @@ def test_hydrate_docling_result_envelope_merges_s3_body():
     assert body["markdown"] == "full body"
     assert body["hierarchical_chunks"]["tier_counts"] == {"parent": 2}
     assert len(body["hierarchical_chunks"]["records"]) == 1
+
+
+def test_hydrate_docling_result_envelope_pointer_only_when_streaming(monkeypatch):
+    """Large spilled results hydrate as pointers (matches platform consumers)."""
+    monkeypatch.setenv("CHUNK_STREAM_S3", "1")
+    envelope = {
+        "request_id": "r1",
+        "status": "success",
+        "result_storage": "s3",
+        "result_s3_bucket": "ct-storage-test",
+        "result_s3_key": "results/r1.json",
+        "result": {"markdown": "", "metadata": {"pages": 1}},
+    }
+    body = io.BytesIO(
+        b'{"result": {"hierarchical_chunks": {"records": ['
+        b'{"chunk_level": "parent", "text": "p"}'
+        b"]}}}"
+    )
+
+    class _Client:
+        def get_object(self, *, Bucket, Key):
+            assert Bucket == "ct-storage-test"
+            assert Key == "results/r1.json"
+            return {"Body": body}
+
+        def head_object(self, *, Bucket, Key):
+            return {"ContentLength": 100}
+
+    out = hydrate_docling_result_envelope(envelope, s3_client=_Client())
+    stub = out["result"]["hierarchical_chunks"]
+    assert "records" not in stub
+    assert stub["record_count"] == 1
+    assert out["result"]["structured_data"] == {}
 
 
 def test_hydrate_docling_result_envelope_noop_for_inline():

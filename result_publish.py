@@ -8,11 +8,21 @@ the bus. We use S3 (already used for PDF inputs); optional inline body when smal
 from __future__ import annotations
 
 import json
+import logging
 import os
 from typing import Any, Dict, Tuple
 
+import ijson
+
+logger = logging.getLogger(__name__)
+
 # Stay under default 1MB NATS limit (envelope + subject overhead)
 NATS_SAFE_INLINE_BYTES = int(os.getenv("NATS_SAFE_INLINE_BYTES", "900000"))
+
+_HIERARCHICAL_RECORD_PREFIXES = (
+    "result.hierarchical_chunks.records.item",
+    "hierarchical_chunks.records.item",
+)
 
 
 def _strip_binary_blobs(value: Any) -> Any:
@@ -81,6 +91,137 @@ def build_s3_envelope(
     return envelope
 
 
+def _s3_object_size_bytes(client: Any, *, bucket: str, key: str) -> int | None:
+    try:
+        head = client.head_object(Bucket=bucket, Key=key)
+    except Exception as exc:
+        logger.warning("head_object failed for s3://%s/%s: %s", bucket, key, exc)
+        return None
+    return int(head.get("ContentLength") or 0)
+
+
+def should_stream_hierarchical_from_s3(
+    *,
+    client: Any,
+    bucket: str,
+    key: str,
+) -> bool:
+    """Return True when hierarchical records should be streamed instead of fully loaded."""
+    flag = os.getenv("CHUNK_STREAM_S3", "").lower()
+    if flag in ("1", "true", "yes"):
+        return True
+    threshold_mb = int(os.getenv("CHUNK_STREAM_S3_THRESHOLD_MB", "50"))
+    size_bytes = _s3_object_size_bytes(client, bucket=bucket, key=key)
+    if size_bytes is None:
+        return False
+    return size_bytes > threshold_mb * 1024 * 1024
+
+
+def summarize_hierarchical_from_s3(
+    *,
+    client: Any,
+    bucket: str,
+    key: str,
+) -> dict[str, Any]:
+    """Count hierarchical GPU records in S3 without loading the full JSON blob."""
+    obj = client.get_object(Bucket=bucket, Key=key)
+    body = obj["Body"]
+    tier_counts: dict[str, int] = {}
+    record_count = 0
+    last_error: Exception | None = None
+    for prefix in _HIERARCHICAL_RECORD_PREFIXES:
+        try:
+            for record in ijson.items(body, prefix):
+                if not isinstance(record, dict):
+                    continue
+                record_count += 1
+                level = str(record.get("chunk_level") or "chunk")
+                tier_counts[level] = tier_counts.get(level, 0) + 1
+            body.close()
+            return {
+                "record_count": record_count,
+                "tier_counts": tier_counts or None,
+            }
+        except ijson.JSONDecodeError as exc:
+            last_error = exc
+            body.close()
+            obj = client.get_object(Bucket=bucket, Key=key)
+            body = obj["Body"]
+            continue
+    body.close()
+    if last_error is not None:
+        raise last_error
+    raise ValueError(f"No hierarchical_chunks.records found in s3://{bucket}/{key}")
+
+
+def _hydrate_s3_pointer_only(
+    data: Dict[str, Any],
+    *,
+    client: Any,
+    bucket: str,
+    key: str,
+) -> Dict[str, Any]:
+    """Merge S3 locator + hierarchical summary without loading the full result object."""
+    summary = summarize_hierarchical_from_s3(client=client, bucket=bucket, key=key)
+    merged = dict(data)
+    inline = merged.get("result") or {}
+    merged["result"] = {
+        "markdown": inline.get("markdown") or "",
+        "text": inline.get("text") or inline.get("markdown") or "",
+        "structured_data": {},
+        "metadata": inline.get("metadata") or {},
+        "hierarchical_chunks": {
+            "tier_counts": summary.get("tier_counts"),
+            "record_count": summary.get("record_count", 0),
+            "result_s3_bucket": bucket,
+            "result_s3_key": key,
+        },
+        "parse_artifacts": inline.get("parse_artifacts") or {},
+    }
+    logger.info(
+        "PDF result S3 pointer hydrate | key=%s record_count=%s stream=1",
+        key,
+        summary.get("record_count", 0),
+    )
+    return merged
+
+
+def _hydrate_s3_full_payload(
+    data: Dict[str, Any],
+    *,
+    client: Any,
+    bucket: str,
+    key: str,
+) -> Dict[str, Any]:
+    """Fetch and merge a small spilled PDF result from S3."""
+    obj = client.get_object(Bucket=bucket, Key=key)
+    stored = json.loads(obj["Body"].read())
+    stored_result = stored.get("result") or {}
+    inline = data.get("result") or {}
+    merged = dict(data)
+    merged["result"] = {
+        **stored_result,
+        "markdown": stored_result.get("markdown") or inline.get("markdown") or "",
+        "text": (
+            stored_result.get("text")
+            or stored_result.get("markdown")
+            or inline.get("text")
+            or ""
+        ),
+        "structured_data": (
+            stored_result.get("structured_data") or inline.get("structured_data") or {}
+        ),
+        "metadata": stored_result.get("metadata") or inline.get("metadata") or {},
+        "hierarchical_chunks": (
+            stored_result.get("hierarchical_chunks") or inline.get("hierarchical_chunks")
+        ),
+        "parse_artifacts": (
+            stored_result.get("parse_artifacts") or inline.get("parse_artifacts") or {}
+        ),
+    }
+    return merged
+
+
 def hydrate_docling_result_envelope(
     data: Dict[str, Any],
     *,
@@ -91,6 +232,9 @@ def hydrate_docling_result_envelope(
 
     Matches platform ``hydrate_pdf_result_from_storage`` so E2E smokes and
     consumers validate spilled large-PDF results (prod or ct-storage-test).
+
+    Large S3 objects use pointer-only hydration (counts + locators) so chunking can
+    stream hierarchical records without loading the full JSON into memory.
     """
     s3_key = data.get("result_s3_key")
     if not s3_key or data.get("result_storage") != "s3":
@@ -119,32 +263,9 @@ def hydrate_docling_result_envelope(
             aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
         )
 
-    obj = client.get_object(Bucket=bucket, Key=s3_key)
-    stored = json.loads(obj["Body"].read())
-    stored_result = stored.get("result") or {}
-    inline = data.get("result") or {}
-    merged = dict(data)
-    merged["result"] = {
-        **stored_result,
-        "markdown": stored_result.get("markdown") or inline.get("markdown") or "",
-        "text": (
-            stored_result.get("text")
-            or stored_result.get("markdown")
-            or inline.get("text")
-            or ""
-        ),
-        "structured_data": (
-            stored_result.get("structured_data") or inline.get("structured_data") or {}
-        ),
-        "metadata": stored_result.get("metadata") or inline.get("metadata") or {},
-        "hierarchical_chunks": (
-            stored_result.get("hierarchical_chunks") or inline.get("hierarchical_chunks")
-        ),
-        "parse_artifacts": (
-            stored_result.get("parse_artifacts") or inline.get("parse_artifacts") or {}
-        ),
-    }
-    return merged
+    if should_stream_hierarchical_from_s3(client=client, bucket=bucket, key=s3_key):
+        return _hydrate_s3_pointer_only(data, client=client, bucket=bucket, key=s3_key)
+    return _hydrate_s3_full_payload(data, client=client, bucket=bucket, key=s3_key)
 
 
 async def publish_docling_result(client, subject: str, response: Dict[str, Any]) -> str:
