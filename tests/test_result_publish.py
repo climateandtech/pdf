@@ -189,3 +189,52 @@ def test_build_slim_chunk_result_omits_structured_data_and_records():
     assert "records" not in hier
     assert hier["record_count"] == 1
     assert hier["records_s3_key"] == "results/r1.records.jsonl"
+
+
+@pytest.mark.asyncio
+async def test_publish_slim_always_uploads_envelope_json():
+    """Slim hier with records_s3_key must set result_s3_key to *.json, not JSONL."""
+    from result_publish import publish_docling_result
+
+    uploads: list[tuple[str, bytes]] = []
+    published: list[bytes] = []
+
+    class _S3Cfg:
+        bucket_name = "documents"
+
+    class _JS:
+        async def publish(self, subject, body):
+            published.append(body)
+
+    class _Client:
+        s3_config = _S3Cfg()
+        js = _JS()
+
+        async def upload_bytes(self, key, body, content_type=None):
+            uploads.append((key, body))
+
+    response = {
+        "request_id": "r1",
+        "status": "success",
+        "backend_resource_id": "abc",
+        "result": {
+            "markdown": "hi",
+            "structured_data": {},
+            "hierarchical_chunks": {
+                "tier_counts": {"child": 1},
+                "record_count": 1,
+                "records_s3_key": "results/r1.records.jsonl",
+            },
+        },
+    }
+    mode = await publish_docling_result(_Client(), "docs.result", response)
+    assert mode == "inline"
+    assert uploads and uploads[0][0] == "results/r1.json"
+    env = json.loads(uploads[0][1])
+    assert env["result_s3_key"] == "results/r1.json"
+    assert "records.jsonl" not in env["result_s3_key"]
+    nats = json.loads(published[0])
+    assert nats["result_s3_key"] == "results/r1.json"
+    assert nats["result"]["hierarchical_chunks"]["records_s3_key"] == (
+        "results/r1.records.jsonl"
+    )

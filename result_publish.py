@@ -338,25 +338,54 @@ async def publish_docling_result(client, subject: str, response: Dict[str, Any])
     Publish result on JetStream. Returns 'inline' or 's3'.
 
     Never raises for payload size — spills to S3 when needed.
+
+    Slim hierarchical results always upload the envelope JSON to
+    ``results/{request_id}.json`` and set ``result_s3_key`` so platform hydrate
+    never falls back to the ``*.records.jsonl`` path.
     """
+    response = dict(response)
+    result = dict(response.get("result") or {})
+    hier = result.get("hierarchical_chunks")
+    request_id = str(response.get("request_id") or "unknown")
+    if isinstance(hier, dict) and hier.get("records_s3_key"):
+        envelope_key = result_envelope_s3_key(request_id)
+        hier = dict(hier)
+        hier["result_s3_key"] = envelope_key
+        hier["result_s3_bucket"] = client.s3_config.bucket_name
+        result["hierarchical_chunks"] = hier
+        response["result"] = result
+        response["result_storage"] = "s3"
+        response["result_s3_bucket"] = client.s3_config.bucket_name
+        response["result_s3_key"] = envelope_key
+        await client.upload_bytes(
+            envelope_key,
+            json.dumps(response, ensure_ascii=False).encode("utf-8"),
+            content_type="application/json",
+        )
+
     payload, body = prepare_result_payload(response)
 
     if len(body) <= NATS_SAFE_INLINE_BYTES:
         await client.js.publish(subject, body)
         return "inline"
 
-    s3_key = f"results/{response.get('request_id', 'unknown')}.json"
-    await client.upload_bytes(
-        s3_key,
-        json.dumps(response, ensure_ascii=False).encode("utf-8"),
-        content_type="application/json",
-    )
+    s3_key = response.get("result_s3_key") or f"results/{request_id}.json"
+    if not response.get("result_s3_key"):
+        await client.upload_bytes(
+            s3_key,
+            json.dumps(response, ensure_ascii=False).encode("utf-8"),
+            content_type="application/json",
+        )
     envelope = build_s3_envelope(
         response,
         s3_bucket=client.s3_config.bucket_name,
         s3_key=s3_key,
         full_bytes=len(body),
     )
+    # Preserve hierarchical pointer fields on spilled NATS envelope.
+    if isinstance(hier, dict):
+        envelope.setdefault("result", {})["hierarchical_chunks"] = hier
+        envelope["result"]["parse_artifacts"] = result.get("parse_artifacts") or {}
     envelope_body = json.dumps(envelope, ensure_ascii=False).encode("utf-8")
     if len(envelope_body) > NATS_SAFE_INLINE_BYTES:
         # Last resort: metadata-only envelope (platform must fetch S3)
