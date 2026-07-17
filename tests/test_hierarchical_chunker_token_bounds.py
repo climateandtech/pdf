@@ -61,6 +61,44 @@ class TestSplitTextTokenAligned:
         segments = _split_text_token_aligned("just a few words", chunker=chunker, max_tokens=512)
         assert segments == ["just a few words"]
 
+    def test_uses_callable_semchunk_chunker(self, monkeypatch) -> None:
+        """Regression: newer semchunk returns Chunker callable, not .chunk()."""
+        chunker = _FakeChunker(max_tokens=8)
+        calls: list[str] = []
+
+        class _FakeSem:
+            @staticmethod
+            def chunkerify(counter, chunk_size=None):
+                def _run(text: str):
+                    calls.append(text)
+                    words = text.split()
+                    return [
+                        " ".join(words[i : i + chunk_size])
+                        for i in range(0, len(words), chunk_size)
+                    ]
+
+                return _run
+
+        monkeypatch.setitem(__import__("sys").modules, "semchunk", _FakeSem)
+        text = " ".join(f"w{i}" for i in range(20))
+        segments = _split_text_token_aligned(text, chunker=chunker, max_tokens=8)
+        assert calls
+        assert all(_tokens(chunker, s) <= 8 for s in segments)
+
+    def test_falls_back_when_semchunk_has_no_chunk_attr(self, monkeypatch) -> None:
+        chunker = _FakeChunker(max_tokens=8)
+
+        class _BrokenSem:
+            @staticmethod
+            def chunkerify(counter, chunk_size=None):
+                return object()  # neither callable nor .chunk
+
+        monkeypatch.setitem(__import__("sys").modules, "semchunk", _BrokenSem)
+        text = " ".join(f"w{i}" for i in range(40))
+        segments = _split_text_token_aligned(text, chunker=chunker, max_tokens=8)
+        assert segments
+        assert all(_tokens(chunker, s) <= 8 for s in segments)
+
 
 class TestSplitTextTokenWindows:
     def test_word_fallback_halves_budget_not_multiplies(self) -> None:

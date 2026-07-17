@@ -253,10 +253,15 @@ def _split_text_token_aligned(text: str, *, chunker: Any, max_tokens: int) -> li
             return _token_count(value, chunker=chunker)
 
         sem_chunker = semchunk.chunkerify(_counter, chunk_size=budget)
-        segments = [s.strip() for s in sem_chunker.chunk(text) if s and s.strip()]
+        # semchunk>=newer returns a callable Chunker; older APIs used .chunk().
+        if callable(sem_chunker):
+            raw = sem_chunker(text)
+        else:
+            raw = sem_chunker.chunk(text)
+        segments = [s.strip() for s in (raw or []) if s and str(s).strip()]
         if segments:
             return segments
-    except (ImportError, TypeError, ValueError, RuntimeError):
+    except (ImportError, TypeError, ValueError, RuntimeError, AttributeError):
         pass
     return _split_text_token_windows(text, chunker=chunker, max_tokens=budget)
 
