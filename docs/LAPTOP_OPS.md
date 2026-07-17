@@ -47,11 +47,15 @@ cd ~/apps/pdf-test && ./scripts/run_test_nats_e2e.sh
 
 ## JetStream subjects
 
-`docs.chunk.*` must be on the DOCUMENTS stream. Deploy scripts run `ensure_documents_stream.py` automatically.
+`docs.chunk.*`, `docs.embed.*`, and `docs.embed.start.*` must stay on the DOCUMENTS stream.
+Deploy/recover run `ensure_documents_stream.py` in **additive** mode (yaml ∪ live) — they must not strip subjects.
+
+Subject list changes are a **NATS migration** (like Alembic): edit `config/nats_streams.yaml`, then workflow `nats-stream-migration` / `coolify-provisioning/scripts/ensure-jetstream-streams.sh`. See [JETSTREAM-OPS.md](../../coolify-provisioning/nats/JETSTREAM-OPS.md).
 
 Manual verify:
 
 ```bash
+python scripts/ensure_documents_stream.py --verify-only
 ./scripts/reset_jetstream_test.sh --verify-only   # test :4223
 ./scripts/reset_jetstream.sh --verify-only        # prod :4222
 ```
