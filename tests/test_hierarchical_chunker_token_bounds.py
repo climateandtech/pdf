@@ -11,6 +11,8 @@ from __future__ import annotations
 import re
 from types import SimpleNamespace
 
+import pytest
+
 import hierarchical_chunker as hc
 from hierarchical_chunker import (
     CHUNKER_VERSION,
@@ -61,37 +63,60 @@ class TestSplitTextTokenAligned:
         segments = _split_text_token_aligned("just a few words", chunker=chunker, max_tokens=512)
         assert segments == ["just a few words"]
 
-    def test_uses_callable_semchunk_chunker(self, monkeypatch) -> None:
-        """Regression: newer semchunk returns Chunker callable, not .chunk()."""
-        chunker = _FakeChunker(max_tokens=8)
-        calls: list[str] = []
+    def test_semchunk_v3_chunker_has_no_chunk_method(self) -> None:
+        """Hypothesis (GPU prod semchunk==3.2.5): Chunker is callable; .chunk does not exist.
 
-        class _FakeSem:
+        Pin the failure mode that crashed docling_chunk_worker:
+        AttributeError: 'Chunker' object has no attribute 'chunk'
+        """
+
+        class _SemchunkV3Chunker:
+            def __call__(self, text: str) -> list[str]:
+                words = text.split()
+                return [" ".join(words[i : i + 8]) for i in range(0, len(words), 8)]
+
+        c = _SemchunkV3Chunker()
+        assert callable(c)
+        assert not hasattr(c, "chunk")
+        with pytest.raises(AttributeError, match="chunk"):
+            c.chunk("w0 w1 w2")  # type: ignore[attr-defined]
+
+    def test_split_text_token_aligned_works_with_semchunk_v3_shaped_chunker(
+        self, monkeypatch
+    ) -> None:
+        """Failing lap: code that only calls ``.chunk()`` raises; must call the Chunker."""
+        chunker = _FakeChunker(max_tokens=8)
+        seen: list[str] = []
+
+        class _SemchunkV3Chunker:
+            def __call__(self, text: str) -> list[str]:
+                seen.append(text)
+                words = text.split()
+                return [" ".join(words[i : i + 8]) for i in range(0, len(words), 8)]
+
+        class _SemchunkV3:
             @staticmethod
             def chunkerify(counter, chunk_size=None):
-                def _run(text: str):
-                    calls.append(text)
-                    words = text.split()
-                    return [
-                        " ".join(words[i : i + chunk_size])
-                        for i in range(0, len(words), chunk_size)
-                    ]
+                return _SemchunkV3Chunker()
 
-                return _run
-
-        monkeypatch.setitem(__import__("sys").modules, "semchunk", _FakeSem)
+        monkeypatch.setitem(__import__("sys").modules, "semchunk", _SemchunkV3)
         text = " ".join(f"w{i}" for i in range(20))
         segments = _split_text_token_aligned(text, chunker=chunker, max_tokens=8)
-        assert calls
-        assert all(_tokens(chunker, s) <= 8 for s in segments)
 
-    def test_falls_back_when_semchunk_has_no_chunk_attr(self, monkeypatch) -> None:
+        assert seen, "semchunk Chunker must be invoked via call, not skipped"
+        assert segments
+        assert all(_tokens(chunker, s) <= 8 for s in segments)
+        assert " ".join(segments).split() == text.split()
+
+    def test_falls_back_when_semchunk_returns_non_callable_without_chunk(
+        self, monkeypatch
+    ) -> None:
         chunker = _FakeChunker(max_tokens=8)
 
         class _BrokenSem:
             @staticmethod
             def chunkerify(counter, chunk_size=None):
-                return object()  # neither callable nor .chunk
+                return object()
 
         monkeypatch.setitem(__import__("sys").modules, "semchunk", _BrokenSem)
         text = " ".join(f"w{i}" for i in range(40))
