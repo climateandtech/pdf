@@ -71,6 +71,30 @@ async def test_load_parse_artifacts_round_trip():
     assert markdown == "# Hello"
 
 
+@pytest.mark.asyncio
+async def test_load_parse_artifacts_falls_back_to_conventional_keys():
+    """force_rechunk jobs may carry only request_id; keys derive from convention."""
+    structured = {"texts": []}
+    client = AsyncMock()
+    client.download_result = AsyncMock(
+        side_effect=[json.dumps(structured).encode("utf-8"), b"# md"]
+    )
+
+    loaded_structured, markdown = await load_parse_artifacts(client, {"request_id": "r9"})
+
+    assert loaded_structured == structured
+    assert markdown == "# md"
+    keys = [call.args[0] for call in client.download_result.await_args_list]
+    assert keys == ["parsed/r9/docling.json", "parsed/r9/markdown.md"]
+
+
+@pytest.mark.asyncio
+async def test_load_parse_artifacts_without_pointers_or_request_id_raises():
+    client = AsyncMock()
+    with pytest.raises(ValueError, match="chunk job missing"):
+        await load_parse_artifacts(client, {})
+
+
 def test_parse_artifact_metadata_normalizes_s3_pointers():
     artifacts = {
         "parse_storage": "s3",

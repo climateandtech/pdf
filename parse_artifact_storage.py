@@ -65,11 +65,20 @@ def parse_artifact_metadata(artifacts: dict[str, Any] | None) -> dict[str, Any]:
 
 
 async def load_parse_artifacts(client: Any, job: dict[str, Any]) -> tuple[dict[str, Any], str]:
-    """Load Docling JSON and markdown referenced by a docs.chunk job."""
+    """Load Docling JSON and markdown referenced by a docs.chunk job.
+
+    Jobs without explicit S3 pointers (e.g. platform-issued force_rechunk jobs
+    that only carry the request id) fall back to the conventional
+    ``parsed/{request_id}/...`` keys the parse worker always writes.
+    """
     json_key = job.get("docling_json_s3_key")
     md_key = job.get("markdown_s3_key")
     if not json_key or not md_key:
-        raise ValueError("chunk job missing docling_json_s3_key or markdown_s3_key")
+        request_id = str(job.get("request_id") or "").strip()
+        if not request_id:
+            raise ValueError("chunk job missing docling_json_s3_key or markdown_s3_key")
+        json_key = json_key or docling_json_s3_key(request_id)
+        md_key = md_key or markdown_s3_key(request_id)
 
     raw_json = await client.download_result(json_key)
     structured = json.loads(raw_json.decode("utf-8"))

@@ -5,9 +5,14 @@ from __future__ import annotations
 import os
 import re
 import time
-from collections import defaultdict
+from collections import defaultdict, deque
 from dataclasses import asdict, dataclass, field
 from typing import Any, Iterator
+
+# Bump when splitting/bounding semantics change. Results are stamped with this
+# so docs.chunk jobs can request a re-chunk of stale S3 results
+# (min_chunker_version); unstamped legacy results count as version 0.
+CHUNKER_VERSION = 2
 
 DEFAULT_MICRO_TOKENS = int(os.getenv("CHUNK_MICRO_TARGET_TOKENS", "150"))
 DEFAULT_CHILD_TOKENS = int(os.getenv("CHUNK_TARGET_TOKENS", "512"))
@@ -114,8 +119,18 @@ def _split_chunk_along_doc_items(
                 _TextChunk(part, heading, _extract_docling_chunk_metadata(chunk))
                 for part in windows
             ]
+        bounded_parts: list[str] = []
+        for part in parts:
+            if len(part) > max_chars:
+                # A single paragraph can still exceed the char budget.
+                bounded_parts.extend(
+                    part[i : i + max_chars] for i in range(0, len(part), max_chars)
+                )
+            else:
+                bounded_parts.append(part)
         return [
-            _TextChunk(part, heading, _extract_docling_chunk_metadata(chunk)) for part in parts
+            _TextChunk(part, heading, _extract_docling_chunk_metadata(chunk))
+            for part in bounded_parts
         ]
 
     segments: list[Any] = []
@@ -197,56 +212,135 @@ def _iter_size_safe_hierarchical_chunks(
         yield from _split_chunk_along_doc_items(chunk, max_chars=max_chars)
 
 
+def _split_text_token_windows(text: str, *, chunker: Any, max_tokens: int) -> list[str]:
+    """Hard token-id windowing — guaranteed ≤ max_tokens per window when a real tokenizer exists."""
+    budget = max(1, int(max_tokens))
+    tokenizer = None
+    get_tokenizer = getattr(getattr(chunker, "tokenizer", None), "get_tokenizer", None)
+    if callable(get_tokenizer):
+        try:
+            tokenizer = get_tokenizer()
+        except (TypeError, ValueError, RuntimeError, OSError):
+            tokenizer = None
+    if tokenizer is not None and hasattr(tokenizer, "encode") and hasattr(tokenizer, "decode"):
+        try:
+            token_ids = tokenizer.encode(text, add_special_tokens=False)
+            windows = []
+            for i in range(0, len(token_ids), budget):
+                part = tokenizer.decode(
+                    token_ids[i : i + budget], skip_special_tokens=True
+                ).strip()
+                if part:
+                    windows.append(part)
+            if windows:
+                return windows
+        except (TypeError, ValueError, RuntimeError):
+            pass
+    # No usable tokenizer: word windows sized conservatively (words ≥ tokens is
+    # not guaranteed for bge-m3, so halve the budget instead of inflating it).
+    words = re.findall(r"\S+", text)
+    step = max(8, budget // 2)
+    return [" ".join(words[i : i + step]) for i in range(0, len(words), step)] or [text]
+
+
+def _split_text_token_aligned(text: str, *, chunker: Any, max_tokens: int) -> list[str]:
+    """Token-budgeted text split via semchunk (the mechanism Docling's HybridChunker uses)."""
+    budget = max(1, int(max_tokens))
+    try:
+        import semchunk  # deferred: required in production, optional for unit tests
+
+        def _counter(value: str) -> int:
+            return _token_count(value, chunker=chunker)
+
+        sem_chunker = semchunk.chunkerify(_counter, chunk_size=budget)
+        segments = [s.strip() for s in sem_chunker.chunk(text) if s and s.strip()]
+        if segments:
+            return segments
+    except (ImportError, TypeError, ValueError, RuntimeError):
+        pass
+    return _split_text_token_windows(text, chunker=chunker, max_tokens=budget)
+
+
+def _split_piece_token_aligned(piece: Any, *, chunker: Any, max_tokens: int) -> list[Any]:
+    """Split one token-oversized (char-safe) chunk into ≤ max_tokens pieces.
+
+    Prefers Docling's own ``HybridChunker._split_using_plain_text`` (semchunk with
+    heading/caption headroom) for genuine DocChunks; pre-split ``_TextChunk``
+    instances go through semchunk / token windows directly with heading headroom
+    reserved for embed-time contextual text.
+    """
+    heading = _heading_path(piece)
+    meta = getattr(piece, "meta", None)
+    docling_split = getattr(chunker, "_split_using_plain_text", None)
+    if callable(docling_split) and not isinstance(meta, dict):
+        try:
+            parts = [p for p in docling_split(piece) if _chunk_text(p)]
+        except (TypeError, ValueError, AttributeError, RuntimeError):
+            parts = []
+        if parts and all(
+            _token_count(_chunk_text(p), chunker=chunker) <= max_tokens for p in parts
+        ):
+            return parts
+    base_meta = meta if isinstance(meta, dict) else _extract_docling_chunk_metadata(piece)
+    base_meta = {k: v for k, v in (base_meta or {}).items() if k != "headings"}
+    heading_overhead = (
+        _token_count("\n".join(heading) + "\n\n", chunker=chunker) if heading else 0
+    )
+    # Keep a minimum body budget when headings eat the whole allowance, but
+    # never exceed max_tokens itself.
+    floor = max(1, min(16, int(max_tokens)))
+    budget = max(floor, int(max_tokens) - heading_overhead)
+    out: list[Any] = []
+    for segment in _split_text_token_aligned(
+        _chunk_text(piece), chunker=chunker, max_tokens=budget
+    ):
+        if _token_count(segment, chunker=chunker) > budget:
+            out.extend(
+                _TextChunk(window, heading, dict(base_meta))
+                for window in _split_text_token_windows(
+                    segment, chunker=chunker, max_tokens=budget
+                )
+            )
+        else:
+            out.append(_TextChunk(segment, heading, dict(base_meta)))
+    return out
+
+
 def _hybrid_chunks_bounded(document: Any, chunker: Any) -> list[Any]:
     """Hybrid-style chunking that never HF-tokenizes mega strings.
 
-    Uses HierarchicalChunker + doc_item pre-split, then Docling HybridChunker's
-    tokenizer only on size-safe segments (and its own split when still over max_tokens).
+    Char-oversized chunks split along Docling doc_items first (tokenizer safety
+    only), then *every* piece is bounded by the real tokenizer budget
+    (max_tokens) via the Docling-native plain-text splitter. Windows align with
+    the token limit — the 32k char safety cap never leaks into output sizes.
     """
     max_tokens = int(getattr(chunker, "max_tokens", DEFAULT_CHILD_TOKENS) or DEFAULT_CHILD_TOKENS)
     max_chars = max(DEFAULT_SAFE_TOKENIZE_CHARS, max_tokens * 4)
-    pieces = list(_iter_size_safe_hierarchical_chunks(document, max_chars=max_chars))
 
+    queue: deque[Any] = deque(_iter_size_safe_hierarchical_chunks(document, max_chars=max_chars))
     out: list[Any] = []
-    for piece in pieces:
+    while queue:
+        piece = queue.popleft()
         text = _chunk_text(piece)
         if not text:
             continue
-        # Approx first — only call HF when under the char budget.
         if len(text) > max_chars:
-            out.extend(_split_chunk_along_doc_items(piece, max_chars=max_chars))
+            segments = _split_chunk_along_doc_items(piece, max_chars=max_chars)
+            if len(segments) == 1 and segments[0] is piece:
+                # Structural split made no progress: hard char windows so the
+                # tokenizer never sees a mega string.
+                heading = _heading_path(piece)
+                piece_meta = _extract_docling_chunk_metadata(piece)
+                segments = [
+                    _TextChunk(text[i : i + max_chars], heading, dict(piece_meta))
+                    for i in range(0, len(text), max_chars)
+                ]
+            queue.extendleft(reversed(segments))
             continue
-        token_count = _token_count(text, chunker=chunker)
-        if token_count <= max_tokens:
+        if _token_count(text, chunker=chunker) <= max_tokens:
             out.append(piece)
             continue
-        # Over budget but size-safe: use HybridChunker.split path if available,
-        # otherwise paragraph windows under max_tokens (approx).
-        split_fn = getattr(chunker, "split", None) or getattr(chunker, "_split", None)
-        if callable(split_fn):
-            try:
-                out.extend(list(split_fn(piece)))
-                continue
-            except (TypeError, ValueError, AttributeError, RuntimeError):
-                # Fall through to approx word windows when Docling split rejects TextChunk.
-                pass
-        approx_budget = max(max_tokens * 4, 500)
-        words = re.findall(r"\S+", text)
-        start = 0
-        heading = _heading_path(piece)
-        base_meta = (
-            piece.meta
-            if isinstance(getattr(piece, "meta", None), dict)
-            else _extract_docling_chunk_metadata(piece)
-        )
-        while start < len(words):
-            end = min(len(words), start + approx_budget)
-            part = " ".join(words[start:end])
-            meta = dict(base_meta) if isinstance(base_meta, dict) else {}
-            out.append(_TextChunk(part, heading, meta))
-            if end >= len(words):
-                break
-            start = end
+        out.extend(_split_piece_token_aligned(piece, chunker=chunker, max_tokens=max_tokens))
     return out
 
 
@@ -686,11 +780,13 @@ def chunk_hybrid(
     return {
         "records": payload_records,
         "tier_counts": {"child": len(records)},
+        "chunker_version": CHUNKER_VERSION,
         "metrics": {
             "chunk_wall_time_s": round(elapsed_s, 3),
             "embed_vector_count": len(records),
             "storage_text_bytes": sum(len(record.text) for record in records),
             "max_tokens": max_tokens,
+            "chunker_version": CHUNKER_VERSION,
             "avg_chunk_tokens": (
                 round(sum(token_counts) / len(token_counts), 1) if token_counts else 0.0
             ),
@@ -790,6 +886,7 @@ def chunk_hierarchical(
     return {
         "records": all_records,
         "tier_counts": tier_counts,
+        "chunker_version": CHUNKER_VERSION,
         "metrics": {
             "chunk_wall_time_s": round(elapsed_s, 3),
             "embed_vector_count": len(searchable),
@@ -797,5 +894,6 @@ def chunk_hierarchical(
             "micro_tokens": micro_tokens,
             "child_tokens": child_tokens,
             "parent_max_tokens": parent_max_tokens,
+            "chunker_version": CHUNKER_VERSION,
         },
     }

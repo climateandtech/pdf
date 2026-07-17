@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from config import NatsConfig
-from hierarchical_chunker import chunk_hierarchical, warmup_chunk_tokenizer
+from hierarchical_chunker import CHUNKER_VERSION, chunk_hierarchical, warmup_chunk_tokenizer
 from parse_artifact_storage import load_parse_artifacts, parse_artifact_metadata
 from result_publish import (
     build_s3_envelope,
@@ -43,6 +43,35 @@ def _touch_heartbeat() -> None:
         HEARTBEAT_PATH.write_text(str(time.time()), encoding="utf-8")
     except OSError as exc:
         logger.warning("heartbeat write failed: %s", exc)
+
+
+def _truthy(value: Any) -> bool:
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
+def force_rechunk_requested(job: dict[str, Any]) -> bool:
+    """True when the docs.chunk job explicitly asks to bypass skip-if-done."""
+    if _truthy(job.get("force_rechunk")):
+        return True
+    options = job.get("docling_options")
+    return isinstance(options, dict) and _truthy(options.get("force_rechunk"))
+
+
+def min_chunker_version_requested(job: dict[str, Any]) -> int:
+    """Minimum chunker version the job requires stored results to satisfy (0 = any)."""
+    for source in (job, job.get("docling_options")):
+        if not isinstance(source, dict):
+            continue
+        raw = source.get("min_chunker_version")
+        if raw is None:
+            continue
+        try:
+            return max(0, int(raw))
+        except (TypeError, ValueError):
+            logger.warning("ignoring non-integer min_chunker_version=%r", raw)
+    return 0
 
 
 class DoclingChunkWorker:
@@ -83,6 +112,51 @@ class DoclingChunkWorker:
         except (OSError, RuntimeError, ValueError, KeyError, TypeError) as exc:
             logger.debug("result head_object miss for %s: %s", key, exc)
             return False
+
+    async def _stored_chunker_version(self, request_id: str) -> int:
+        """Read chunker_version from the stored result envelope (0 = legacy/unknown).
+
+        Any download/parse failure returns 0 so a min_chunker_version job simply
+        re-chunks instead of crashing the worker.
+        """
+        key = result_envelope_s3_key(request_id)
+        try:
+            raw = await self.client.download_result(key)
+            envelope = json.loads(raw.decode("utf-8"))
+        except Exception as exc:  # noqa: BLE001 — any failure means "treat as legacy"
+            logger.warning("could not read stored envelope %s: %s — version 0", key, exc)
+            return 0
+        for candidate in (
+            envelope.get("chunker_version"),
+            ((envelope.get("result") or {}).get("hierarchical_chunks") or {}).get(
+                "chunker_version"
+            ),
+        ):
+            try:
+                if candidate is not None:
+                    return int(candidate)
+            except (TypeError, ValueError):
+                continue
+        return 0
+
+    async def _should_skip_rechunk(self, job: dict[str, Any], request_id: str) -> bool:
+        """Skip-if-done gate: stored result exists, no force flag, version satisfied."""
+        if force_rechunk_requested(job):
+            print(f"🔁 Chunk Worker: force_rechunk requested for {request_id}")
+            return False
+        if not await self._result_exists(request_id):
+            return False
+        min_version = min_chunker_version_requested(job)
+        if min_version <= 0:
+            return True
+        stored = await self._stored_chunker_version(request_id)
+        if stored >= min_version:
+            return True
+        print(
+            f"🔁 Chunk Worker: stored chunker_version={stored} < "
+            f"min_chunker_version={min_version} for {request_id} — re-chunking"
+        )
+        return False
 
     async def _republish_existing_result(self, job: dict[str, Any], request_id: str) -> str:
         """Republish S3 envelope for an already-chunked result without re-chunking."""
@@ -147,8 +221,7 @@ class DoclingChunkWorker:
             print(f"📨 Chunk Worker: job {request_id}")
             _touch_heartbeat()
 
-            existing = await self._result_exists(request_id)
-            if existing:
+            if await self._should_skip_rechunk(job, request_id):
                 mode = await self._republish_existing_result(job, request_id)
                 print(f"📤 Chunk Worker: skipped re-chunk for {request_id} ({mode})")
                 await message.ack()
@@ -179,6 +252,7 @@ class DoclingChunkWorker:
                 "records_s3_key": records_key,
                 "records_bytes": records_bytes,
                 "result_s3_bucket": self.s3_config.bucket_name,
+                "chunker_version": hierarchical_chunks.get("chunker_version", CHUNKER_VERSION),
             }
             # Drop in-memory records before building the NATS/S3 envelope.
             del records
