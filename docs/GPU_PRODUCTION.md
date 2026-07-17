@@ -84,6 +84,8 @@ Legacy **`pdf-docling-worker.service`** (from old `deploy_worker.sh`) is removed
 
 Production **`venv/`** runs Docling **2.96.x** (same pin as `requirements.txt`). Benchmark scripts may reuse `venv-benchmark/` but production no longer stays on 2.42.
 
+**semchunk:** pin `>=3.2.5,<4.0.0` in `requirements.txt` (matches GPU / `docling-core[chunking]`). Do not leave laptop/CI on 2.x — HybridChunker call sites differ (`.chunk` vs callable). Deploy runs `tests/test_semchunk_version_alignment.py`.
+
 ### Isolated venvs (optional Nemotron / experiments — not production NATS)
 
 Production **`venv/`** is the NATS worker. Optional isolated venvs:

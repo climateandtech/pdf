@@ -24,6 +24,8 @@ from hierarchical_chunker import (
     _TextChunk,
 )
 
+pytestmark = pytest.mark.unit
+
 
 class _WordTokenizer:
     """Whitespace tokenizer stand-in (1 word == 1 token, no get_tokenizer)."""

@@ -68,7 +68,9 @@ gpu_smoldocling "
   python scripts/verify_torch_import.py
   pytest tests/test_bootstrap_gpu.py tests/test_gpu_memory_config.py \
     tests/test_verify_torch_import.py tests/test_worker_runtime.py \
-    tests/test_result_publish.py tests/test_parse_artifact_storage.py -m unit -q --no-cov
+    tests/test_result_publish.py tests/test_parse_artifact_storage.py \
+    tests/test_semchunk_version_alignment.py \
+    tests/test_hierarchical_chunker_token_bounds.py -m unit -q --no-cov
   ./scripts/install_systemd_services.sh
   python scripts/ensure_documents_stream.py
 "

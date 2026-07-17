@@ -5,6 +5,10 @@ torch==2.6.0
 torchvision==0.21.0
 # Benchmark-validated on GPU (2026-05): fast_text_tables + rich + table structure.
 docling>=2.96.0,<2.97.0
+# HybridChunker / hierarchical_chunker token splits. docling-core[chunking] allows
+# semchunk>=2.2,<4 — pin 3.2.5+ so laptop/CI match GPU. 2.x exposes .chunk();
+# 3.x is callable-only (AttributeError if code assumes .chunk).
+semchunk>=3.2.5,<4.0.0
 nats-py>=2.6.0
 PyYAML>=6.0
 python-dotenv>=1.0.0
