@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Ensure DOCUMENTS JetStream includes docs.chunk.* (and other PDF pipeline subjects)."""
+"""Ensure DOCUMENTS JetStream includes docs.chunk.*, docs.embed.*, and other pipeline subjects."""
 
 from __future__ import annotations
 
@@ -16,6 +16,8 @@ DOCUMENTS_SUBJECTS = [
     "docs.upload.*",
     "docs.process.*",
     "docs.chunk.*",
+    "docs.embed.*",
+    "docs.embed.start.*",
     "docs.result.*",
     "document.*",
 ]
