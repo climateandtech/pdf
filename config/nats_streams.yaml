@@ -91,6 +91,20 @@ streams:
     replicas: 1
     description: "Report Analyst analysis results"
 
+  MEETINGS:
+    name: "MEETINGS"
+    subjects:
+      - "meetings.bot.dispatch"
+      - "meetings.bot.sync"
+      - "meetings.occurrence.materialize"
+    storage: "file"
+    retention: "limits"
+    max_age: 86400
+    max_msgs: 100000
+    max_consumers: -1
+    replicas: 1
+    description: "Meeting bot dispatch, transcript sync, occurrence materialization"
+
 # Durables applied by coolify-provisioning ensure (SoT:
 # ct-platform/backend/config/nats_streams.yaml). Keep GPU docs process/chunk in sync.
 consumers:
