@@ -19,7 +19,7 @@ streams:
 
   DOCUMENTS:
     name: "DOCUMENTS"
-    subjects: ["docs.upload.*", "docs.process.*", "docs.chunk.*", "docs.embed.*", "docs.embed.start.*", "docs.result.*", "document.*"]
+    subjects: ["docs.upload.*", "docs.process.*", "docs.chunk.*", "docs.embed.*", "docs.embed.start.*", "docs.result.*", "docs.spatial.convert.*", "docs.spatial.result.*", "document.*"]
     storage: "file"
     retention: "limits"
     max_age: 86400
@@ -46,13 +46,15 @@ streams:
       - "workflow.stage.*"
       - "workflow.smoke.*"
       - "workflow.notify.*"
+      - "workflow.event.*"
+      - "workflow.dlq.*"
     storage: "file"
     retention: "limits"
     max_age: 604800
     max_msgs: 100000
     max_consumers: -1
     replicas: 1
-    description: "Platform workflow engine"
+    description: "Platform workflow engine commands, smoke, notify, human-task events, and DLQ"
 
   KG:
     name: "KG"
