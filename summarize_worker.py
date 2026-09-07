@@ -75,8 +75,12 @@ class GpuSummarizeWorker:
         self.running = False
 
     async def setup(self) -> None:
-        self.nc = await nats.connect(self.nats_config.url, connect_timeout=15)
+        self.nc = await nats.connect(
+            self.nats_config.connection_url,
+            connect_timeout=15,
+        )
         self.js = self.nc.jetstream()
+        # Never log token-bearing URL.
         print(f"✅ Summarize Worker connected to NATS: {self.nats_config.url}")
 
     async def close(self) -> None:
