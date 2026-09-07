@@ -9,6 +9,7 @@ StartLimitBurst=5
 Type=simple
 WorkingDirectory=/home/smoldocling/apps/pdf
 EnvironmentFile=-/home/smoldocling/apps/pdf/.env
+Environment=PYTHONUNBUFFERED=1
 Environment=OMP_NUM_THREADS=4
 Environment=NATS_ACK_WAIT_S=600
 Environment=BERT_SUMMARY_NUM_SENTENCES=3
