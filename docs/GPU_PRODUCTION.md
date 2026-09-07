@@ -11,6 +11,7 @@ Legacy wrappers in `coolify-provisioning/`: `gpu-deploy-worker.sh`, `gpu-sync-na
 |-----------|------|---------|------|
 | Docling parse worker | `smoldocling` | `docling_worker.py` | `docs.process.*` → `docs.chunk.*` or `docs.result.*` |
 | Docling chunk worker | `smoldocling` | `docling_chunk_worker.py` | `docs.chunk.*` → `docs.result.*` (GPU host, bge-m3 tokenizer) |
+| Extractive summarize | `smoldocling` | `summarize_worker.py` | `docs.summarize.*` → `docs.summarize.result.*` (ST + k-means) |
 | GLiNER infer | `smoldocling` | `kg_gliner_worker.py` | `kg.infer` (request/reply) |
 | Ollama (bge-m3) | `marc` | Ollama | HTTP `:16942` (platform embed) |
 

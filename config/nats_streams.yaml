@@ -19,7 +19,7 @@ streams:
 
   DOCUMENTS:
     name: "DOCUMENTS"
-    subjects: ["docs.upload.*", "docs.process.*", "docs.chunk.*", "docs.embed.*", "docs.embed.start.*", "docs.metadata.*", "docs.summarize.*", "docs.result.*", "docs.spatial.convert.*", "docs.spatial.result.*", "document.*"]
+    subjects: ["docs.upload.*", "docs.process.*", "docs.chunk.*", "docs.embed.*", "docs.embed.start.*", "docs.metadata.*", "docs.summarize.*", "docs.summarize.result.*", "docs.result.*", "docs.spatial.convert.*", "docs.spatial.result.*", "document.*"]
     storage: "file"
     retention: "limits"
     max_age: 86400
@@ -127,6 +127,14 @@ consumers:
       max_deliver: 5
       max_ack_pending: 1
       description: "GPU Docling hierarchical chunk worker"
+    - name: "gpu_summarize_worker"
+      stream: "DOCUMENTS"
+      durable: "gpu_summarize_worker"
+      filter_subject: "docs.summarize.*"
+      ack_wait: 600
+      max_deliver: 5
+      max_ack_pending: 1
+      description: "GPU extractive summarize (sentence embeddings + k-means)"
 
 auto_create:
   enabled: false

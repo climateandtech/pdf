@@ -1,0 +1,25 @@
+[Unit]
+Description=GPU extractive summarize NATS worker (docs.summarize.* → docs.summarize.result.*)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/home/smoldocling/apps/pdf
+EnvironmentFile=-/home/smoldocling/apps/pdf/.env
+Environment=OMP_NUM_THREADS=4
+Environment=NATS_ACK_WAIT_S=600
+Environment=BERT_SUMMARY_NUM_SENTENCES=3
+Environment=BERT_SUMMARY_MODEL=sentence-transformers/all-MiniLM-L6-v2
+Environment=SUMMARIZE_WORKER_HEARTBEAT_PATH=/home/smoldocling/apps/pdf/summarize-worker.heartbeat
+Environment=SUMMARIZE_JOB_TIMEOUT_S=600
+ExecStart=/home/smoldocling/apps/pdf/venv/bin/python /home/smoldocling/apps/pdf/summarize_worker.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/smoldocling/apps/pdf/summarize-worker.log
+StandardError=append:/home/smoldocling/apps/pdf/summarize-worker.log
+
+[Install]
+WantedBy=default.target
