@@ -9,6 +9,8 @@ StartLimitBurst=5
 Type=simple
 WorkingDirectory=/home/smoldocling/apps/pdf
 EnvironmentFile=-/home/smoldocling/apps/pdf/.env
+# Largest English GLiNER 2.5 IE checkpoint (no gliner2.5-large exists).
+Environment=KG_GLINER_MODEL=fastino/gliner2.5-base-v1
 ExecStart=/home/smoldocling/apps/pdf/venv/bin/python /home/smoldocling/apps/pdf/kg_gliner_worker.py
 Restart=always
 RestartSec=10

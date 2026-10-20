@@ -1,5 +1,7 @@
-# Build from repo root: docker build -f pdf/Dockerfile.gliner pdf
-FROM python:3.12-slim
+# Lean GLiNER infer worker — not the full Docling image.
+# Build: docker build -f pdf/Dockerfile.gliner -t kg-gliner-infer pdf
+# Prefer bookworm tag when present locally (Docker Desktop DNS to hub often flakes).
+FROM python:3.12-slim-bookworm
 
 WORKDIR /app
 
@@ -7,14 +9,16 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-COPY requirements.txt requirements-gliner.txt ./
-RUN pip install --no-cache-dir -r requirements.txt -r requirements-gliner.txt
+COPY requirements-gliner.txt ./
+RUN pip install --no-cache-dir -r requirements-gliner.txt
 
-COPY config.py s3_config.py generic_config.py ./
+COPY config.py ./
 COPY kg_gliner/ ./kg_gliner/
 COPY kg_gliner_worker.py ./
 
 ENV KG_GLINER_INFER_SUBJECT=kg.infer
+ENV KG_GLINER_MODEL=fastino/gliner2.5-base-v1
 ENV PYTHONUNBUFFERED=1
+ENV HF_HOME=/tmp/huggingface
 
 CMD ["python", "kg_gliner_worker.py"]

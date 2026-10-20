@@ -1,3 +1,7 @@
-# GLiNER GPU infer worker (install on top of requirements.txt in a venv or separate venv)
+# Lean deps for kg_gliner_worker only (not full Docling stack).
+nats-py>=2.6.0
+pydantic>=2.0.0
+python-dotenv>=1.0.0
+# Default: GLiNER 2.5 (gliner2 AutoExtractor). ReLex optional for rollback.
+gliner2[local]>=1.0.0,<3.0.0
 gliner>=0.2.0,<0.3.0
-torch>=2.2.0,<2.7.0
