@@ -3,20 +3,74 @@
 Supports:
 - GLiNER 2.5 boundary models via ``gliner2.AutoExtractor`` (default)
 - Legacy GLiNER-ReLex via ``gliner.GLiNER`` when ``KG_GLINER_MODEL`` is a ReLex id
+
+Crowded label sets collapse recall (e.g. NHESS/UNFCCC vanish at 7 labels).
+When more than ``KG_GLINER_LABEL_BATCH_SIZE`` labels are requested, we run the
+same model in smaller batches and merge — still ML, no acronym allowlists.
 """
 
 from __future__ import annotations
 
 import logging
+import os
 import re
 from functools import lru_cache
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple  # Optional used for unscored spans
 
 logger = logging.getLogger(__name__)
 
 # Fastino 2.5 IE family is small/base/multi only (no *-large*). GPU uses base.
 DEFAULT_MODEL = "fastino/gliner2.5-base-v1"
 RELEX_MODEL_MARKERS = ("gliner-relex", "knowledgator/")
+# Empirically, batches of 3-4 keep org/event recall on LinkedIn-length text.
+DEFAULT_LABEL_BATCH_SIZE = 4
+# Extra ML pass with org-family labels only (no allowlists) recovers orgs that
+# vanish when person/location compete in the same batch.
+ORG_FAMILY_LABELS: tuple[str, ...] = (
+    "organization",
+    "company",
+    "ngo",
+    "government organization",
+    "standard",
+)
+
+
+def _label_batch_size() -> int:
+    raw = (os.getenv("KG_GLINER_LABEL_BATCH_SIZE") or "").strip()
+    if not raw:
+        return DEFAULT_LABEL_BATCH_SIZE
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return DEFAULT_LABEL_BATCH_SIZE
+
+
+def _batched_labels(labels: List[str], batch_size: int) -> List[List[str]]:
+    if len(labels) <= batch_size:
+        return [labels]
+    return [labels[i : i + batch_size] for i in range(0, len(labels), batch_size)]
+
+
+def _entity_dedupe_key(ent: Dict[str, Any]) -> Tuple[str, str, Any, Any]:
+    return (
+        str(ent.get("label") or "").casefold(),
+        str(ent.get("text") or "").casefold(),
+        ent.get("start"),
+        ent.get("end"),
+    )
+
+
+def _merge_entities(batches: List[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
+    out: List[Dict[str, Any]] = []
+    seen: set[Tuple[str, str, Any, Any]] = set()
+    for ents in batches:
+        for ent in ents:
+            key = _entity_dedupe_key(ent)
+            if key in seen:
+                continue
+            seen.add(key)
+            out.append(ent)
+    return out
 
 
 def _is_relex_model(model_name: str) -> bool:
@@ -118,8 +172,24 @@ def _extract_gliner25(
     """GLiNER 2.5 via AutoExtractor; relations optional when API supports them."""
     del threshold  # AutoExtractor uses model defaults; keep param for NATS parity
     model = _load_gliner25_model(model_name)
-    raw = model.extract_entities(text, labels)
-    entities = _normalize_gliner25_entities(raw, labels)
+    batch_size = _label_batch_size()
+    batches = _batched_labels(labels, batch_size)
+    org_family = [lab for lab in ORG_FAMILY_LABELS if lab in labels]
+    # Reinforce with a dedicated org-family pass when those labels were diluted.
+    if org_family and (len(batches) > 1 or len(labels) > len(org_family)):
+        batches = [*list(batches), org_family]
+    if len(batches) > 1:
+        logger.info(
+            "gliner25 label batching labels=%s batch_size=%s passes=%s",
+            len(labels),
+            batch_size,
+            len(batches),
+        )
+    entity_batches: List[List[Dict[str, Any]]] = []
+    for batch in batches:
+        raw = model.extract_entities(text, batch)
+        entity_batches.append(_normalize_gliner25_entities(raw, batch))
+    entities = _merge_entities(entity_batches)
     relations: List[Dict[str, Any]] = []
     rel = relation_labels or []
     if rel and hasattr(model, "extract_relations"):
@@ -152,18 +222,28 @@ def _normalize_gliner25_entities(raw: Any, _labels: List[str]) -> List[Dict[str,
     return []
 
 
+def _optional_score(raw: Any) -> Optional[float]:
+    """Pass through model scores; never invent a default confidence."""
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return None
+
+
 def _span_to_entity(span: Any, *, label: str) -> Dict[str, Any]:
     if isinstance(span, str):
-        return {"text": span, "label": label, "score": 0.5, "start": None, "end": None}
+        return {"text": span, "label": label, "score": None, "start": None, "end": None}
     if isinstance(span, dict):
         return {
             "text": span.get("text") or span.get("span") or "",
             "label": span.get("label") or span.get("type") or label,
-            "score": float(span.get("score", 0.5)),
+            "score": _optional_score(span.get("score")),
             "start": span.get("start"),
             "end": span.get("end"),
         }
-    return {"text": str(span), "label": label, "score": 0.5, "start": None, "end": None}
+    return {"text": str(span), "label": label, "score": None, "start": None, "end": None}
 
 
 def _normalize_entities(raw: Any) -> List[Dict[str, Any]]:
@@ -176,7 +256,7 @@ def _normalize_entities(raw: Any) -> List[Dict[str, Any]]:
                 {
                     "text": item.get("text") or item.get("span") or "",
                     "label": item.get("label") or item.get("type") or "",
-                    "score": float(item.get("score", 0.5)),
+                    "score": _optional_score(item.get("score")),
                     "start": item.get("start"),
                     "end": item.get("end"),
                 }

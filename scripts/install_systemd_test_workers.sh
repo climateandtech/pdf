@@ -18,8 +18,9 @@ install_unit() {
 
 install_unit "$PWD/infrastructure/systemd/smoldocling-docling-worker-test.service"
 install_unit "$PWD/infrastructure/systemd/smoldocling-docling-chunk-worker-test.service"
+install_unit "$PWD/infrastructure/systemd/smoldocling-kg-gliner-worker-test.service"
 
 systemctl --user daemon-reload
 echo ""
 echo "Test workers (WorkingDirectory=$HOME/apps/pdf-test):"
-echo "  systemctl --user restart smoldocling-docling-worker-test smoldocling-docling-chunk-worker-test"
+echo "  systemctl --user restart smoldocling-docling-worker-test smoldocling-docling-chunk-worker-test smoldocling-kg-gliner-worker-test"

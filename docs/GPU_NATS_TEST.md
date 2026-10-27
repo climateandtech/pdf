@@ -8,8 +8,10 @@ Separate from **production** `~/apps/pdf` (broker `89.167.15.10:4222`, branch `m
 | NATS | `89.167.15.10:4222` | `89.167.15.10:4223` (`ct-nats-test`) |
 | systemd parse | `smoldocling-docling-worker` | `smoldocling-docling-worker-test` |
 | systemd chunk | `smoldocling-docling-chunk-worker` | `smoldocling-docling-chunk-worker-test` |
+| systemd kg.infer | `smoldocling-kg-gliner-worker` | `smoldocling-kg-gliner-worker-test` |
 | Log parse | `worker.log` | `worker-test.log` |
 | Log chunk | `chunk-worker.log` | `chunk-worker-test.log` |
+| Log kg | `kg_gliner.log` | `kg_gliner-test.log` |
 | GPU profile | `full` | `20gb_nats` (coexists with prod + Ollama) |
 
 Laptop and Docker E2E use `.env.nats.test` (port **4223**, Mac-reachable).
@@ -96,16 +98,18 @@ python scripts/gpu_nats_chunk_e2e_smoke.py tests/fixtures/minimal.pdf --hierarch
 
 ```bash
 ssh gpu
-sudo -u smoldocling bash -lc 'systemctl --user status smoldocling-docling-worker-test smoldocling-docling-chunk-worker-test'
+sudo -u smoldocling bash -lc 'systemctl --user status smoldocling-docling-worker-test smoldocling-docling-chunk-worker-test smoldocling-kg-gliner-worker-test'
 tail -f ~/apps/pdf-test/worker-test.log
 tail -f ~/apps/pdf-test/chunk-worker-test.log
+tail -f ~/apps/pdf-test/kg_gliner-test.log
 ```
 
 Install/restart test units after git deploy:
 
 ```bash
 cd ~/apps/pdf-test && ./scripts/install_systemd_test_workers.sh
-systemctl --user restart smoldocling-docling-worker-test smoldocling-docling-chunk-worker-test
+systemctl --user restart smoldocling-docling-worker-test smoldocling-docling-chunk-worker-test smoldocling-kg-gliner-worker-test
 ```
 
 From laptop (`coolify-provisioning/`): `./gpu-workers.sh status test`, `./gpu-deploy-pdf-test.sh --branch <branch>`
+GLiNER only: `./gpu-workers.sh restart test-kg` (after the unit is installed).

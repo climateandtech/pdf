@@ -1,0 +1,23 @@
+[Unit]
+Description=KG GLiNER NATS infer worker — test broker (smoldocling, pdf-test)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/home/smoldocling/apps/pdf-test
+EnvironmentFile=-/home/smoldocling/apps/pdf-test/.env
+# Largest English GLiNER 2.5 IE checkpoint (no gliner2.5-large exists).
+Environment=KG_GLINER_MODEL=fastino/gliner2.5-base-v1
+Environment=KG_GLINER_INFER_SUBJECT=kg.infer
+Environment=KG_GLINER_LABEL_BATCH_SIZE=4
+ExecStart=/home/smoldocling/apps/pdf-test/venv/bin/python /home/smoldocling/apps/pdf-test/kg_gliner_worker.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/smoldocling/apps/pdf-test/kg_gliner-test.log
+StandardError=append:/home/smoldocling/apps/pdf-test/kg_gliner-test.log
+
+[Install]
+WantedBy=default.target
