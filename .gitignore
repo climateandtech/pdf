@@ -25,6 +25,9 @@ wheels/
 
 # Virtual environments
 venv/
+venv-forecast/
+benchmarks/climate-health/data/
+benchmarks/climate-health/last-run.json
 env/
 ENV/
 

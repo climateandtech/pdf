@@ -1,0 +1,7 @@
+# Production forecast worker (own venv on the GPU host). Not the Docling venv.
+torch>=2.4
+numpy>=1.26
+safetensors
+huggingface_hub
+nats-py
+timestral @ git+https://github.com/mistralai/timestral.git

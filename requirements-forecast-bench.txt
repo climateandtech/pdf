@@ -1,0 +1,6 @@
+# Bench-only extras. Prophet and TimesFM are not in the production worker.
+-r requirements-forecast.txt
+pandas
+pyarrow
+timesfm
+prophet

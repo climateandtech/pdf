@@ -19,6 +19,11 @@ install_unit() {
 install_unit "$PWD/infrastructure/systemd/smoldocling-docling-worker.service"
 install_unit "$PWD/infrastructure/systemd/smoldocling-docling-chunk-worker.service"
 install_unit "$PWD/infrastructure/systemd/smoldocling-kg-gliner-worker.service"
+if [[ -x "$PWD/venv-forecast/bin/python" ]]; then
+  install_unit "$PWD/infrastructure/systemd/smoldocling-forecast-worker.service"
+else
+  echo "Skipping forecast unit until venv-forecast exists (./scripts/setup_forecast_venv.sh)"
+fi
 
 # Retire legacy unit name from deploy_worker.sh if present.
 if [[ -f "$USER_SYSTEMD/pdf-docling-worker.service" ]]; then
@@ -29,7 +34,7 @@ fi
 
 systemctl --user daemon-reload
 echo ""
-echo "Installed smoldocling-docling-worker + docling-chunk-worker + kg-gliner-worker"
+echo "Installed docling, chunk, kg-gliner, and forecast workers"
 echo "  systemctl --user start smoldocling-docling-worker smoldocling-docling-chunk-worker smoldocling-kg-gliner-worker"
 echo "  systemctl --user status smoldocling-docling-worker smoldocling-docling-chunk-worker smoldocling-kg-gliner-worker"
 echo ""

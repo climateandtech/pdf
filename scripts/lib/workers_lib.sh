@@ -9,6 +9,7 @@ gpu_worker_unit() {
     prod-docling) echo "smoldocling-docling-worker.service" ;;
     prod-chunk) echo "smoldocling-docling-chunk-worker.service" ;;
     prod-kg) echo "smoldocling-kg-gliner-worker.service" ;;
+    prod-forecast) echo "smoldocling-forecast-worker.service" ;;
     test-docling) echo "smoldocling-docling-worker-test.service" ;;
     test-chunk) echo "smoldocling-docling-chunk-worker-test.service" ;;
     test-kg) echo "smoldocling-kg-gliner-worker-test.service" ;;
@@ -18,7 +19,7 @@ gpu_worker_unit() {
 
 gpu_worker_dir() {
   case "$1" in
-    prod-docling|prod-chunk|prod-kg) echo "$GPU_PROD_DIR" ;;
+    prod-docling|prod-chunk|prod-kg|prod-forecast) echo "$GPU_PROD_DIR" ;;
     test-docling|test-chunk|test-kg) echo "$GPU_TEST_DIR" ;;
     *) return 1 ;;
   esac
@@ -29,6 +30,7 @@ gpu_worker_log() {
     prod-docling) echo "${GPU_PROD_DIR}/worker.log" ;;
     prod-chunk) echo "${GPU_PROD_DIR}/chunk-worker.log" ;;
     prod-kg) echo "${GPU_PROD_DIR}/kg_gliner.log" ;;
+    prod-forecast) echo "${GPU_PROD_DIR}/forecast-worker.log" ;;
     test-docling) echo "${GPU_TEST_DIR}/worker-test.log" ;;
     test-chunk) echo "${GPU_TEST_DIR}/chunk-worker-test.log" ;;
     test-kg) echo "${GPU_TEST_DIR}/kg_gliner-test.log" ;;
@@ -41,6 +43,7 @@ gpu_worker_label() {
     prod-docling) echo "prod docling parse (:4222)" ;;
     prod-chunk) echo "prod docling chunk CPU (:4222)" ;;
     prod-kg) echo "prod kg-gliner (:4222)" ;;
+    prod-forecast) echo "prod forecast CUDA (:4222)" ;;
     test-docling) echo "test docling parse (:4223)" ;;
     test-chunk) echo "test docling chunk CPU (:4223)" ;;
     test-kg) echo "test kg-gliner (:4223)" ;;
@@ -51,13 +54,14 @@ gpu_worker_label() {
 gpu_workers_expand() {
   local target="${1:-all}"
   case "$target" in
-    prod) printf '%s\n' prod-docling prod-chunk prod-kg ;;
+    prod) printf '%s\n' prod-docling prod-chunk prod-kg prod-forecast ;;
     test) printf '%s\n' test-docling test-chunk test-kg ;;
     docling) printf '%s\n' prod-docling ;;
     chunk) printf '%s\n' prod-chunk ;;
     kg|gliner|kg-gliner) printf '%s\n' prod-kg ;;
-    all) printf '%s\n' prod-docling prod-chunk prod-kg test-docling test-chunk test-kg ;;
-    prod-docling|prod-chunk|prod-kg|test-docling|test-chunk|test-kg)
+    forecast) printf '%s\n' prod-forecast ;;
+    all) printf '%s\n' prod-docling prod-chunk prod-kg prod-forecast test-docling test-chunk test-kg ;;
+    prod-docling|prod-chunk|prod-kg|prod-forecast|test-docling|test-chunk|test-kg)
       printf '%s\n' "$target"
       ;;
     *)

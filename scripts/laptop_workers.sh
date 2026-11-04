@@ -42,7 +42,7 @@ case "$CMD" in
       case "$1" in
         -f|--follow) FOLLOW=true; shift ;;
         -n) LINES="${2:?}"; shift 2 ;;
-        prod|test|all|prod-docling|prod-chunk|prod-kg|test-docling|test-chunk)
+        prod|test|all|prod-docling|prod-chunk|prod-kg|prod-forecast|test-docling|test-chunk)
           TARGET="$1"; shift ;;
         *) echo "Unknown: $1" >&2; exit 1 ;;
       esac

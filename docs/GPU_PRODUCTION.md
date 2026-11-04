@@ -13,6 +13,7 @@ Legacy wrappers in `coolify-provisioning/`: `gpu-deploy-worker.sh`, `gpu-sync-na
 | Docling chunk worker | `smoldocling` | `docling_chunk_worker.py` | `docs.chunk.*` → `docs.result.*` (GPU host, bge-m3 tokenizer) |
 | Extractive summarize | `smoldocling` | `summarize_worker.py` | `docs.summarize.*` → `docs.summarize.result.*` (ST + k-means) |
 | GLiNER infer | `smoldocling` | `kg_gliner_worker.py` | `kg.infer` (request/reply) |
+| Forecast | `smoldocling` | `forecast_worker.py` (`venv-forecast`) | `forecast.infer` (request/reply, CUDA, Timestral-28M) |
 | Ollama (bge-m3) | `marc` | Ollama | HTTP `:16942` (platform embed) |
 
 When `hierarchical_chunk=true`, the parse worker uploads `parsed/{request_id}/docling.json` and
@@ -48,6 +49,7 @@ Both workers use **user systemd** with `Restart=always`. Linger must be enabled 
 | `smoldocling-docling-worker.service` | `worker.log` |
 | `smoldocling-docling-chunk-worker.service` | `chunk-worker.log` |
 | `smoldocling-kg-gliner-worker.service` | `kg_gliner.log` |
+| `smoldocling-forecast-worker.service` | `forecast-worker.log` |
 
 Unit files: `infrastructure/systemd/`. Install with `scripts/install_systemd_services.sh` or one-shot `scripts/setup_production_services.sh`.
 
@@ -80,6 +82,18 @@ tail -f ~/apps/pdf/worker.log
 ```
 
 Legacy **`pdf-docling-worker.service`** (from old `deploy_worker.sh`) is removed on migrate.
+
+## Forecast worker
+
+Timestral-28M only. Own venv, not `venv/`. The unit is installed only after the venv exists, so a Docling deploy does not restart-loop on a missing interpreter.
+
+```bash
+./scripts/setup_forecast_venv.sh
+./scripts/install_systemd_services.sh
+systemctl --user start smoldocling-forecast-worker
+```
+
+`FORECAST_DEVICE=cpu` is an explicit opt-in. CUDA failure does not fall back.
 
 ## Docling version
 
