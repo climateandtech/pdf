@@ -19,7 +19,11 @@ def decide(model: Any, data: dict[str, Any], *, model_name: str) -> dict[str, An
         questions={
             "route": {
                 "type": "choice",
-                "instructions": "Which single flow should handle this message?",
+                "instructions": (
+                    "Which single flow should handle the latest user message? "
+                    "An emoji, a joke, or surprise or doubt about an earlier result "
+                    "is reaction, not a search. A search requires the message to name a subject."
+                ),
                 "criteria": labels,
             }
         },
