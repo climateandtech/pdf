@@ -1,0 +1,22 @@
+[Unit]
+Description=Route-decision NATS worker (smoldocling)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+WorkingDirectory=/home/smoldocling/apps/pdf
+EnvironmentFile=-/home/smoldocling/apps/pdf/.env
+Environment=ROUTE_DECISION_MODEL=tardellirs/crivo-400m
+Environment=ROUTE_DECIDE_SUBJECT=route.decide
+# Own venv. Do not point this unit at the Docling venv.
+ExecStart=/home/smoldocling/apps/pdf/venv-route-decision/bin/python /home/smoldocling/apps/pdf/route_decision_worker.py
+Restart=always
+RestartSec=10
+StandardOutput=append:/home/smoldocling/apps/pdf/route-decision-worker.log
+StandardError=append:/home/smoldocling/apps/pdf/route-decision-worker.log
+
+[Install]
+WantedBy=default.target
