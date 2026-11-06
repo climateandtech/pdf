@@ -22,7 +22,8 @@ def decide(model: Any, data: dict[str, Any], *, model_name: str) -> dict[str, An
                 "instructions": (
                     "Which single flow should handle the latest user message? "
                     "An emoji, a joke, or surprise or doubt about an earlier result "
-                    "is reaction, not a search. A search requires the message to name a subject."
+                    "is reaction, not a search. A request to search or reuse an earlier "
+                    "topic is a search. A search requires the message to name a subject."
                 ),
                 "criteria": labels,
             }
