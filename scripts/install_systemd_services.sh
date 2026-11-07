@@ -24,6 +24,11 @@ if [[ -x "$PWD/venv-forecast/bin/python" ]]; then
 else
   echo "Skipping forecast unit until venv-forecast exists (./scripts/setup_forecast_venv.sh)"
 fi
+if [[ -x "$PWD/venv/bin/python" ]] && "$PWD/venv/bin/python" -c "import kokoro" >/dev/null 2>&1; then
+  install_unit "$PWD/infrastructure/systemd/smoldocling-speech-worker.service"
+else
+  echo "Skipping speech unit until kokoro imports (pip install -r requirements-speech.txt)"
+fi
 
 # Retire legacy unit name from deploy_worker.sh if present.
 if [[ -f "$USER_SYSTEMD/pdf-docling-worker.service" ]]; then

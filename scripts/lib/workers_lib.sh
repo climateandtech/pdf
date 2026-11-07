@@ -10,6 +10,7 @@ gpu_worker_unit() {
     prod-chunk) echo "smoldocling-docling-chunk-worker.service" ;;
     prod-kg) echo "smoldocling-kg-gliner-worker.service" ;;
     prod-forecast) echo "smoldocling-forecast-worker.service" ;;
+    prod-speech) echo "smoldocling-speech-worker.service" ;;
     test-docling) echo "smoldocling-docling-worker-test.service" ;;
     test-chunk) echo "smoldocling-docling-chunk-worker-test.service" ;;
     test-kg) echo "smoldocling-kg-gliner-worker-test.service" ;;
@@ -19,7 +20,7 @@ gpu_worker_unit() {
 
 gpu_worker_dir() {
   case "$1" in
-    prod-docling|prod-chunk|prod-kg|prod-forecast) echo "$GPU_PROD_DIR" ;;
+    prod-docling|prod-chunk|prod-kg|prod-forecast|prod-speech) echo "$GPU_PROD_DIR" ;;
     test-docling|test-chunk|test-kg) echo "$GPU_TEST_DIR" ;;
     *) return 1 ;;
   esac
@@ -31,6 +32,7 @@ gpu_worker_log() {
     prod-chunk) echo "${GPU_PROD_DIR}/chunk-worker.log" ;;
     prod-kg) echo "${GPU_PROD_DIR}/kg_gliner.log" ;;
     prod-forecast) echo "${GPU_PROD_DIR}/forecast-worker.log" ;;
+    prod-speech) echo "${GPU_PROD_DIR}/speech-worker.log" ;;
     test-docling) echo "${GPU_TEST_DIR}/worker-test.log" ;;
     test-chunk) echo "${GPU_TEST_DIR}/chunk-worker-test.log" ;;
     test-kg) echo "${GPU_TEST_DIR}/kg_gliner-test.log" ;;
@@ -44,6 +46,7 @@ gpu_worker_label() {
     prod-chunk) echo "prod docling chunk CPU (:4222)" ;;
     prod-kg) echo "prod kg-gliner (:4222)" ;;
     prod-forecast) echo "prod forecast CUDA (:4222)" ;;
+    prod-speech) echo "prod agent speech (:4222)" ;;
     test-docling) echo "test docling parse (:4223)" ;;
     test-chunk) echo "test docling chunk CPU (:4223)" ;;
     test-kg) echo "test kg-gliner (:4223)" ;;
@@ -60,8 +63,9 @@ gpu_workers_expand() {
     chunk) printf '%s\n' prod-chunk ;;
     kg|gliner|kg-gliner) printf '%s\n' prod-kg ;;
     forecast) printf '%s\n' prod-forecast ;;
+    speech) printf '%s\n' prod-speech ;;
     all) printf '%s\n' prod-docling prod-chunk prod-kg prod-forecast test-docling test-chunk test-kg ;;
-    prod-docling|prod-chunk|prod-kg|prod-forecast|test-docling|test-chunk|test-kg)
+    prod-docling|prod-chunk|prod-kg|prod-forecast|prod-speech|test-docling|test-chunk|test-kg)
       printf '%s\n' "$target"
       ;;
     *)

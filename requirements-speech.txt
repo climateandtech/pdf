@@ -1,0 +1,5 @@
+# Extras for speech_worker.py synthesize. Install into the Docling venv
+# (Whisper ASR already comes from requirements.txt / docling 2.96).
+# System package: espeak-ng (Kokoro phonemizer).
+kokoro>=0.9.4
+soundfile>=0.12

@@ -14,6 +14,7 @@ Legacy wrappers in `coolify-provisioning/`: `gpu-deploy-worker.sh`, `gpu-sync-na
 | Extractive summarize | `smoldocling` | `summarize_worker.py` | `docs.summarize.*` → `docs.summarize.result.*` (ST + k-means) |
 | GLiNER infer | `smoldocling` | `kg_gliner_worker.py` | `kg.infer` (request/reply) |
 | Forecast | `smoldocling` | `forecast_worker.py` (`venv-forecast`) | `forecast.infer` (request/reply, CUDA, Timestral-28M) |
+| Agent speech | `smoldocling` | `speech_worker.py` (Docling `venv/`) | `audio.command.transcribe` + `audio.command.synthesize` (request/reply) |
 | Ollama (bge-m3) | `marc` | Ollama | HTTP `:16942` (platform embed) |
 
 When `hierarchical_chunk=true`, the parse worker uploads `parsed/{request_id}/docling.json` and
@@ -50,6 +51,7 @@ Both workers use **user systemd** with `Restart=always`. Linger must be enabled 
 | `smoldocling-docling-chunk-worker.service` | `chunk-worker.log` |
 | `smoldocling-kg-gliner-worker.service` | `kg_gliner.log` |
 | `smoldocling-forecast-worker.service` | `forecast-worker.log` |
+| `smoldocling-speech-worker.service` | `speech-worker.log` |
 
 Unit files: `infrastructure/systemd/`. Install with `scripts/install_systemd_services.sh` or one-shot `scripts/setup_production_services.sh`.
 
@@ -94,6 +96,19 @@ systemctl --user start smoldocling-forecast-worker
 ```
 
 `FORECAST_DEVICE=cpu` is an explicit opt-in. CUDA failure does not fall back.
+
+## Speech worker
+
+Agent STT uses the Docling Whisper presets. TTS is Kokoro-82M on CPU in the same process. Install Kokoro into the Docling venv, then install the unit. It is not restarted by the default `prod` worker group.
+
+```bash
+sudo apt-get install -y espeak-ng
+./venv/bin/pip install -r requirements-speech.txt
+./scripts/install_systemd_services.sh
+systemctl --user start smoldocling-speech-worker
+```
+
+Contract: `ct-platform/docs/BOT-VOICE-PIPELINE.md`.
 
 ## Docling version
 
