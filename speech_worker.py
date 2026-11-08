@@ -71,10 +71,25 @@ async def _on_synthesize(msg) -> None:
     await _on_message(msg, _reply_synthesize)
 
 
+def _warmup_kokoro() -> None:
+    """Prime Kokoro in-process before accepting NATS traffic."""
+    voice = (os.getenv("BOT_VOICE_TTS_VOICE") or "af_nicole").strip() or "af_nicole"
+    try:
+        from speech.kokoro_runtime import warmup
+
+        logger.info("Warming Kokoro voice=%s", voice)
+        warmup(voice)
+        logger.info("Kokoro warmup done")
+    except Exception as exc:  # noqa: BLE001 — startup must still serve Whisper
+        logger.warning("Kokoro warmup skipped: %s", exc)
+
+
 async def main() -> None:
     """Subscribe both speech subjects until the process is stopped."""
     url = nats_config.connection_url
     logger.info("Connecting to NATS %s", nats_config.url.split("@")[-1])
+    # Load Kokoro before subscribe so the first page-speak is not a ~5s cold start.
+    await asyncio.to_thread(_warmup_kokoro)
     nc = await nats.connect(
         url,
         connect_timeout=nats_config.connect_timeout,

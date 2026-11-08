@@ -47,3 +47,10 @@ def synthesize_request(request: SynthesizeRequest) -> bytes:
     buffer = io.BytesIO()
     sf.write(buffer, merged, rate, format="WAV")
     return buffer.getvalue()
+
+
+def warmup(voice: str = "af_nicole") -> None:
+    """Load Kokoro once so the first live synthesize is not a multi-second cold start."""
+    synthesize_request(
+        SynthesizeRequest(text="Ready.", voice=voice, speed=1.0, pitch=1.0)
+    )
