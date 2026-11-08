@@ -13,8 +13,8 @@ Environment=AUDIO_TRANSCRIBE_SUBJECT=audio.command.transcribe
 Environment=AUDIO_SYNTHESIZE_SUBJECT=audio.command.synthesize
 Environment=BOT_VOICE_STT_MODEL=whisper_tiny
 Environment=BOT_VOICE_TTS_VOICE=af_nicole
-Environment=BOT_VOICE_TTS_SPEED=0.9
-Environment=BOT_VOICE_TTS_PITCH=0.92
+Environment=BOT_VOICE_TTS_SPEED=1.1
+Environment=BOT_VOICE_TTS_PITCH=1.01
 # Docling venv. Kokoro is the extra in requirements-speech.txt (CPU).
 ExecStart=/home/smoldocling/apps/pdf/venv/bin/python /home/smoldocling/apps/pdf/speech_worker.py
 Restart=always
