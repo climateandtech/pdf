@@ -19,6 +19,11 @@ install_unit() {
 install_unit "$PWD/infrastructure/systemd/smoldocling-docling-worker.service"
 install_unit "$PWD/infrastructure/systemd/smoldocling-docling-chunk-worker.service"
 install_unit "$PWD/infrastructure/systemd/smoldocling-kg-gliner-worker.service"
+if [[ -x "$PWD/venv-route-decision/bin/python" ]]; then
+  install_unit "$PWD/infrastructure/systemd/smoldocling-route-decision-worker.service"
+else
+  echo "Skipping route-decision unit until venv-route-decision exists (./scripts/setup_route_decision_venv.sh)"
+fi
 if [[ -x "$PWD/venv-forecast/bin/python" ]]; then
   install_unit "$PWD/infrastructure/systemd/smoldocling-forecast-worker.service"
 else
@@ -39,8 +44,8 @@ fi
 
 systemctl --user daemon-reload
 echo ""
-echo "Installed docling, chunk, kg-gliner, and forecast workers"
-echo "  systemctl --user start smoldocling-docling-worker smoldocling-docling-chunk-worker smoldocling-kg-gliner-worker"
-echo "  systemctl --user status smoldocling-docling-worker smoldocling-docling-chunk-worker smoldocling-kg-gliner-worker"
+echo "Installed docling, chunk, kg-gliner, route-decision, and forecast workers"
+echo "  systemctl --user start smoldocling-docling-worker smoldocling-docling-chunk-worker smoldocling-kg-gliner-worker smoldocling-route-decision-worker"
+echo "  systemctl --user status smoldocling-docling-worker smoldocling-docling-chunk-worker smoldocling-kg-gliner-worker smoldocling-route-decision-worker"
 echo ""
 echo "For reboot persistence (run once as root): loginctl enable-linger $(whoami)"

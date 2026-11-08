@@ -24,9 +24,16 @@ systemctl --user restart \
   smoldocling-docling-chunk-worker.service \
   smoldocling-kg-gliner-worker.service
 
-systemctl --user is-active \
-  smoldocling-docling-worker.service \
-  smoldocling-docling-chunk-worker.service \
+RECOVER_UNITS=(
+  smoldocling-docling-worker.service
+  smoldocling-docling-chunk-worker.service
   smoldocling-kg-gliner-worker.service
+)
+if systemctl --user cat smoldocling-route-decision-worker.service >/dev/null 2>&1; then
+  systemctl --user restart smoldocling-route-decision-worker.service
+  RECOVER_UNITS+=(smoldocling-route-decision-worker.service)
+fi
+
+systemctl --user is-active "${RECOVER_UNITS[@]}"
 
 echo "GPU workers recovered (git tree untouched)."

@@ -13,6 +13,7 @@ Legacy wrappers in `coolify-provisioning/`: `gpu-deploy-worker.sh`, `gpu-sync-na
 | Docling chunk worker | `smoldocling` | `docling_chunk_worker.py` | `docs.chunk.*` → `docs.result.*` (GPU host, bge-m3 tokenizer) |
 | Extractive summarize | `smoldocling` | `summarize_worker.py` | `docs.summarize.*` → `docs.summarize.result.*` (ST + k-means) |
 | GLiNER infer | `smoldocling` | `kg_gliner_worker.py` | `kg.infer` (request/reply) |
+| Route decision (Crivo) | `smoldocling` | `route_decision_worker.py` (`venv-route-decision`) | `route.decide` (request/reply) |
 | Forecast | `smoldocling` | `forecast_worker.py` (`venv-forecast`) | `forecast.infer` (request/reply, CUDA, Timestral-28M) |
 | Agent speech | `smoldocling` | `speech_worker.py` (Docling `venv/`) | `audio.command.transcribe` + `audio.command.synthesize` (request/reply) |
 | Ollama (bge-m3) | `marc` | Ollama | HTTP `:16942` (platform embed) |
@@ -50,6 +51,7 @@ Both workers use **user systemd** with `Restart=always`. Linger must be enabled 
 | `smoldocling-docling-worker.service` | `worker.log` |
 | `smoldocling-docling-chunk-worker.service` | `chunk-worker.log` |
 | `smoldocling-kg-gliner-worker.service` | `kg_gliner.log` |
+| `smoldocling-route-decision-worker.service` | `route-decision-worker.log` |
 | `smoldocling-forecast-worker.service` | `forecast-worker.log` |
 | `smoldocling-speech-worker.service` | `speech-worker.log` |
 
@@ -84,6 +86,18 @@ tail -f ~/apps/pdf/worker.log
 ```
 
 Legacy **`pdf-docling-worker.service`** (from old `deploy_worker.sh`) is removed on migrate.
+
+## Route-decision worker (Crivo)
+
+Own venv (`venv-route-decision`), not Docling `venv/`. Serves NATS request/reply `route.decide` for thinker-bot when `BOT_CRIVO_ROUTE=1`. The unit is installed only after the venv exists (same pattern as forecast).
+
+```bash
+./scripts/setup_route_decision_venv.sh
+./scripts/install_systemd_services.sh
+systemctl --user start smoldocling-route-decision-worker
+```
+
+Model defaults to `tardellirs/crivo-400m` (`ROUTE_DECISION_MODEL`). Subject override: `ROUTE_DECIDE_SUBJECT`.
 
 ## Forecast worker
 

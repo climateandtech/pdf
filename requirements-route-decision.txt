@@ -1,0 +1,12 @@
+# Production route-decision worker (own venv on the GPU host). Not the Docling venv.
+# Serves NATS request/reply subject route.decide (Crivo).
+torch>=2.4
+numpy>=1.26
+safetensors
+huggingface_hub
+transformers
+tokenizers
+nats-py
+httpx
+PyYAML
+tqdm

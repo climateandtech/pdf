@@ -33,6 +33,9 @@ echo "==> Start systemd services"
 systemctl --user restart smoldocling-docling-worker.service
 systemctl --user restart smoldocling-docling-chunk-worker.service
 systemctl --user restart smoldocling-kg-gliner-worker.service
+if systemctl --user cat smoldocling-route-decision-worker.service >/dev/null 2>&1; then
+  systemctl --user restart smoldocling-route-decision-worker.service
+fi
 sleep 3
 
 systemctl --user --no-pager status smoldocling-docling-worker.service || true
@@ -40,6 +43,8 @@ echo ""
 systemctl --user --no-pager status smoldocling-docling-chunk-worker.service || true
 echo ""
 systemctl --user --no-pager status smoldocling-kg-gliner-worker.service || true
+echo ""
+systemctl --user --no-pager status smoldocling-route-decision-worker.service || true
 
 echo ""
 echo "==> Verify imports"

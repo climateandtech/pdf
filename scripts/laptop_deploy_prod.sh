@@ -79,8 +79,12 @@ if [ "$RESTART" = true ]; then
   gpu_systemd_user "
     systemctl --user restart smoldocling-docling-worker.service \
       smoldocling-docling-chunk-worker.service smoldocling-kg-gliner-worker.service
-    systemctl --user is-active smoldocling-docling-worker.service \
-      smoldocling-docling-chunk-worker.service smoldocling-kg-gliner-worker.service
+    ACTIVE='smoldocling-docling-worker.service smoldocling-docling-chunk-worker.service smoldocling-kg-gliner-worker.service'
+    if systemctl --user cat smoldocling-route-decision-worker.service >/dev/null 2>&1; then
+      systemctl --user restart smoldocling-route-decision-worker.service
+      ACTIVE=\"\${ACTIVE} smoldocling-route-decision-worker.service\"
+    fi
+    systemctl --user is-active \${ACTIVE}
   "
 fi
 echo "Done."
