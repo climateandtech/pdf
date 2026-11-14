@@ -21,6 +21,22 @@ def test_is_relex_model_detection():
     assert not _is_relex_model("fastino/gliner2.5-base-v1")
 
 
+def test_relex_model_id_remaps_to_gliner25():
+    """Belief: ReLex ids never load; extract always uses AutoExtractor 2.5."""
+    mock_model = MagicMock()
+    mock_model.extract_entities.return_value = {
+        "entities": {"organization": ["Henkel AG"]}
+    }
+    with patch("kg_gliner.extract._load_gliner25_model", return_value=mock_model) as load:
+        entities, _ = extract_spans(
+            "Henkel AG published a report.",
+            ["organization"],
+            model_name="knowledgator/gliner-relex-large-v0.5",
+        )
+    load.assert_called_with(DEFAULT_MODEL)
+    assert any(e["text"] == "Henkel AG" for e in entities)
+
+
 def test_extract_empty_text():
     entities, relations = extract_spans("", ["CO2"])
     assert entities == []

@@ -1,8 +1,7 @@
 """GLiNER extraction — runs on GPU; platform calls via NATS kg.infer.
 
-Supports:
-- GLiNER 2.5 boundary models via ``gliner2.AutoExtractor`` (default)
-- Legacy GLiNER-ReLex via ``gliner.GLiNER`` when ``KG_GLINER_MODEL`` is a ReLex id
+GLiNER 2.5 via ``gliner2.AutoExtractor`` only. ReLex model ids are remapped to
+``DEFAULT_MODEL`` (legacy ``KG_GLINER_MODEL=knowledgator/…`` must not run).
 
 Crowded label sets collapse recall (e.g. NHESS/UNFCCC vanish at 7 labels).
 When more than ``KG_GLINER_LABEL_BATCH_SIZE`` labels are requested, we run the
@@ -79,13 +78,6 @@ def _is_relex_model(model_name: str) -> bool:
 
 
 @lru_cache(maxsize=2)
-def _load_relex_model(model_name: str):
-    from gliner import GLiNER  # pip package (not this directory)
-
-    return GLiNER.from_pretrained(model_name)
-
-
-@lru_cache(maxsize=2)
 def _load_gliner25_model(model_name: str):
     from gliner2 import AutoExtractor
 
@@ -108,15 +100,15 @@ def extract_spans(
     if not labels:
         return [], []
 
+    if _is_relex_model(model_name):
+        logger.warning(
+            "GLiNER-ReLex is disabled; remapping %s → %s",
+            model_name,
+            DEFAULT_MODEL,
+        )
+        model_name = DEFAULT_MODEL
+
     try:
-        if _is_relex_model(model_name):
-            return _extract_relex(
-                text,
-                labels,
-                relation_labels,
-                threshold=threshold,
-                model_name=model_name,
-            )
         return _extract_gliner25(
             text,
             labels,
@@ -130,35 +122,6 @@ def extract_spans(
     except (OSError, RuntimeError, ValueError, TypeError) as e:
         logger.error("gliner inference failed: %s", e)
         return _heuristic_entities(text, labels), []
-
-
-def _extract_relex(
-    text: str,
-    labels: List[str],
-    relation_labels: Optional[List[str]],
-    *,
-    threshold: float,
-    model_name: str,
-) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    model = _load_relex_model(model_name)
-    rel = relation_labels or []
-    if rel:
-        entities, relations = model.inference(
-            texts=[text],
-            labels=labels,
-            relations=rel,
-            threshold=threshold,
-        )
-        return (
-            _normalize_entities(entities[0] if entities else []),
-            _normalize_relations(relations[0] if relations else []),
-        )
-    entities = model.inference(
-        texts=[text],
-        labels=labels,
-        threshold=threshold,
-    )
-    return _normalize_entities(entities[0] if entities else []), []
 
 
 def _extract_gliner25(
